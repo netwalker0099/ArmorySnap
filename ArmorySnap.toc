@@ -1,0 +1,9 @@
+## Interface: 20504
+## Title: ArmorySnap
+## Notes: Passively snapshots gear (including enchants and gems) for your entire raid and lets you browse it in a paper-doll inventory view.
+## Author: netwalker0099
+## Version: 1.0.0
+## SavedVariables: ArmorySnapDB
+
+Core.lua
+UI.lua
