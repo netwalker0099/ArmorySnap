@@ -713,18 +713,16 @@ function AS.DeleteSnapshot(key)
 end
 
 ----------------------------------------------------------------------
--- Snapshot retention — purge snapshots older than 30 days
+-- Snapshot retention — purge snapshots older than configured days
 ----------------------------------------------------------------------
-local RETENTION_DAYS = 30
-
 function AS.PurgeOldSnapshots()
     if not AS.db or not AS.db.snapshots then return end
+    local retDays = AS.db.options and AS.db.options.retentionDays or 30
     local now = time()
-    local cutoff = now - (RETENTION_DAYS * 86400)
+    local cutoff = now - (retDays * 86400)
     local purged = 0
 
     for key, snap in pairs(AS.db.snapshots) do
-        -- Parse timestamp from key format "YYYY-MM-DD HH:MM - Zone"
         local y, m, d, H, M = key:match("^(%d%d%d%d)-(%d%d)-(%d%d) (%d%d):(%d%d)")
         if y then
             local snapTime = time({
@@ -741,7 +739,7 @@ function AS.PurgeOldSnapshots()
     if purged > 0 then
         Print("Purged " .. purged .. " snapshot"
               .. (purged ~= 1 and "s" or "") .. " older than "
-              .. RETENTION_DAYS .. " days.")
+              .. retDays .. " days.")
     end
 end
 
@@ -765,8 +763,9 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
         if not AS.db.options   then AS.db.options   = {} end
         if AS.db.options.scanGroup  == nil then AS.db.options.scanGroup  = false end
         if AS.db.options.elvuiTheme == nil then AS.db.options.elvuiTheme = false end
-        if AS.db.options.verbose    == nil then AS.db.options.verbose    = false end
-        if AS.db.options.minimapPos == nil then AS.db.options.minimapPos = nil end
+        if AS.db.options.verbose       == nil then AS.db.options.verbose       = false end
+        if AS.db.options.retentionDays == nil then AS.db.options.retentionDays = 30 end
+        if AS.db.options.minimapPos    == nil then AS.db.options.minimapPos    = nil end
 
         CacheEmptyTextures()
         AS.PurgeOldSnapshots()

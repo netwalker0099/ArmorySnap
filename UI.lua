@@ -475,11 +475,64 @@ local function CreateBrowseFrame()
     end)
     verboseCheckbox = vcb
 
+    -- Retention row
+    local retRow = CreateFrame("Frame", nil, f)
+    retRow:SetPoint("TOPLEFT", cbRow, "BOTTOMLEFT", 0, 0)
+    retRow:SetPoint("RIGHT", f, "RIGHT", -10, 0)
+    retRow:SetHeight(26)
+
+    local retLabel = retRow:CreateFontString(nil, "OVERLAY",
+                                              "GameFontNormalSmall")
+    retLabel:SetPoint("LEFT", 4, 0)
+    retLabel:SetText("Keep snapshots:")
+
+    local retDD = CreateFrame("Frame", "ASRetentionDD", retRow,
+                              "UIDropDownMenuTemplate")
+    retDD:SetPoint("LEFT", retLabel, "RIGHT", -8, -2)
+    UIDropDownMenu_SetWidth(retDD, 80)
+
+    local retOptions = {
+        { text = "1 day",   value = 1 },
+        { text = "7 days",  value = 7 },
+        { text = "14 days", value = 14 },
+        { text = "30 days", value = 30 },
+    }
+
+    local function RetDDInit(self, level)
+        local current = AS.db and AS.db.options
+                        and AS.db.options.retentionDays or 30
+        for _, opt in ipairs(retOptions) do
+            local info = UIDropDownMenu_CreateInfo()
+            info.text    = opt.text
+            info.value   = opt.value
+            info.checked = (opt.value == current)
+            info.func = function(self)
+                if AS.db and AS.db.options then
+                    AS.db.options.retentionDays = self.value
+                end
+                UIDropDownMenu_SetText(retDD, opt.text)
+                CloseDropDownMenus()
+            end
+            UIDropDownMenu_AddButton(info, level)
+        end
+    end
+    UIDropDownMenu_Initialize(retDD, RetDDInit)
+
+    -- Set initial text
+    local initDays = AS.db and AS.db.options
+                     and AS.db.options.retentionDays or 30
+    for _, opt in ipairs(retOptions) do
+        if opt.value == initDays then
+            UIDropDownMenu_SetText(retDD, opt.text)
+            break
+        end
+    end
+
     --==============================================================
     -- LEFT PANEL: Snapshot dropdown + member list
     --==============================================================
     local leftPanel = CreateFrame("Frame", nil, f)
-    leftPanel:SetPoint("TOPLEFT", cbRow, "BOTTOMLEFT", 2, -2)
+    leftPanel:SetPoint("TOPLEFT", retRow, "BOTTOMLEFT", 2, -2)
     leftPanel:SetPoint("BOTTOM", f, "BOTTOM", 0, 8)
     leftPanel:SetWidth(LIST_WIDTH)
 
