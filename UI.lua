@@ -20,7 +20,7 @@ local DOLL_WIDTH    = 330
 local FRAME_WIDTH   = LIST_WIDTH + DOLL_WIDTH + 30
 local DOLL_COL_H    = #LEFT_SLOTS * (SLOT_SIZE + SLOT_SPACING)
 local DOLL_H        = DOLL_COL_H + SLOT_SIZE + 16       -- columns + gap + bot row
-local TALENT_H      = 76                                 -- talent bar area
+local TALENT_H      = 52                                 -- talent bar area
 local FRAME_HEIGHT  = 28 + 18 + 26 + 24 + 28 + 22       -- title + status + checkbox row + snap label
                     + 30                                  -- dropdown
                     + DOLL_H + TALENT_H                   -- paper doll + talents
@@ -614,33 +614,33 @@ local function CreateBrowseFrame()
     tBg:SetColorTexture(0, 0, 0, 0.2)
     talentFrame.bg = tBg
 
-    -- Spec name
+    -- Spec name + points string at top
     talentSpecText = talentFrame:CreateFontString(nil, "OVERLAY",
                                                    "GameFontNormal")
     talentSpecText:SetPoint("TOP", 0, -4)
 
-    -- 3 tree icons + point labels
+    -- 3 tree columns: [icon] name \n points — evenly spaced
     talentIcons = {}
     talentTexts = {}
-    local treeWidth = 32
-    local treeGap   = 20
-    local totalTW   = 3 * treeWidth + 2 * treeGap
-    local treeStart = (DOLL_WIDTH - totalTW) / 2
+    local iconSize   = 22
+    local colWidth    = math.floor(DOLL_WIDTH / 3)
 
     for t = 1, 3 do
+        local colX = (t - 1) * colWidth
+
         local ic = talentFrame:CreateTexture(nil, "ARTWORK")
-        ic:SetSize(treeWidth, treeWidth)
+        ic:SetSize(iconSize, iconSize)
         ic:SetPoint("TOPLEFT", talentFrame, "TOPLEFT",
-                    treeStart + (t - 1) * (treeWidth + treeGap), -18)
+                    colX + 8, -22)
         ic:SetTexCoord(0.08, 0.92, 0.08, 0.92)
         ic:Hide()
         talentIcons[t] = ic
 
         local tx = talentFrame:CreateFontString(nil, "OVERLAY",
                                                  "GameFontHighlightSmall")
-        tx:SetPoint("TOP", ic, "BOTTOM", 0, -2)
-        tx:SetWidth(treeWidth + treeGap - 4)
-        tx:SetJustifyH("CENTER")
+        tx:SetPoint("LEFT", ic, "RIGHT", 4, 0)
+        tx:SetWidth(colWidth - iconSize - 16)
+        tx:SetJustifyH("LEFT")
         tx:SetText("")
         talentTexts[t] = tx
     end
@@ -843,7 +843,7 @@ function AS.RefreshPaperDoll()
                     talentIcons[t]:SetTexture(tree.icon)
                     talentIcons[t]:Show()
                 end
-                talentTexts[t]:SetText(tree.name .. "\n" .. tree.points)
+                talentTexts[t]:SetText(tree.name .. ": " .. tree.points)
             end
         else
             -- Tree names available but points not (Anniversary API limitation)
