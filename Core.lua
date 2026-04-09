@@ -401,24 +401,69 @@ local function OnInspectReady(guid)
     local snap = AS.db.snapshots[s.snapshotKey]
     if not snap then FinishInspect(); return end
 
+    -- Capture gear immediately (always available on INSPECT_READY)
     local charInfo    = CaptureCharInfo(unit)
     charInfo.gear     = CaptureGear(unit)
-    charInfo.talents  = CaptureTalents(true)  -- inspect = true
-    snap.members[charInfo.name] = charInfo
-    s.captured[charInfo.name]   = true
+    charInfo.talents  = CaptureTalents(true)
+
+    -- Check if we got real talent data
+    local totalPts = 0
+    if charInfo.talents and charInfo.talents.trees then
+        for _, tree in ipairs(charInfo.talents.trees) do
+            totalPts = totalPts + (tree.points or 0)
+        end
+    end
+
+    local charName = charInfo.name
+
+    -- Save what we have now
+    snap.members[charName] = charInfo
+    s.captured[charName]   = true
     UpdateCounts()
 
     local gc = 0
     for _ in pairs(charInfo.gear) do gc = gc + 1 end
-    local specStr = ""
-    if charInfo.talents and charInfo.talents.spec ~= "" then
-        specStr = "  " .. charInfo.talents.points .. " " .. charInfo.talents.spec
-    end
-    Verbose("  Scanned |cffffffff" .. charInfo.name .. "|r (" .. gc
-          .. " items" .. specStr .. ")  [" .. s.totalCaptured .. "/" .. s.totalInRaid .. "]")
 
-    FinishInspect()
-    if AS.OnMemberCaptured then AS.OnMemberCaptured() end
+    if totalPts > 0 then
+        -- Got talents, finish immediately
+        local specStr = ""
+        if charInfo.talents.spec ~= "" then
+            specStr = "  " .. charInfo.talents.points .. " " .. charInfo.talents.spec
+        end
+        Verbose("  Scanned |cffffffff" .. charName .. "|r (" .. gc
+              .. " items" .. specStr .. ")  [" .. s.totalCaptured .. "/" .. s.totalInRaid .. "]")
+        FinishInspect()
+        if AS.OnMemberCaptured then AS.OnMemberCaptured() end
+    else
+        -- Talents not ready yet — keep inspect open and retry after delay
+        Verbose("  Scanned |cffffffff" .. charName .. "|r (" .. gc
+              .. " items, talents pending)  [" .. s.totalCaptured .. "/" .. s.totalInRaid .. "]")
+
+        -- Cancel the timeout so we don't double-finish
+        if inspectTimer then inspectTimer:Cancel(); inspectTimer = nil end
+
+        -- Retry talents in 1.5 seconds, then close inspect
+        C_Timer.After(1.5, function()
+            -- Re-read talents while inspect is still open
+            local retryTalents = CaptureTalents(true)
+            local retryPts = 0
+            if retryTalents and retryTalents.trees then
+                for _, tree in ipairs(retryTalents.trees) do
+                    retryPts = retryPts + (tree.points or 0)
+                end
+            end
+            if retryPts > 0 then
+                -- Update stored snapshot with real talents
+                if snap.members[charName] then
+                    snap.members[charName].talents = retryTalents
+                end
+                Verbose("  Updated talents for |cffffffff" .. charName
+                      .. "|r: " .. retryTalents.points .. " " .. retryTalents.spec)
+            end
+            FinishInspect()
+            if AS.OnMemberCaptured then AS.OnMemberCaptured() end
+        end)
+    end
 end
 
 local function TryInspectUnit(unit)
