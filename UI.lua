@@ -1,25 +1,35 @@
 ----------------------------------------------------------------------
--- ArmorySnap  –  UI.lua
--- Browse frame with paper-doll gear view, scan status, group checkbox
+-- ArmorySnap  –  UI.lua  v1.1.0
+-- Browse frame with paper-doll, talents, ElvUI theme, minimap button
 ----------------------------------------------------------------------
 local AS = _G.ArmorySnap
 
 ----------------------------------------------------------------------
--- Layout constants
+-- Layout constants  (scaled to fit weapons row comfortably)
 ----------------------------------------------------------------------
-local SLOT_SIZE     = 37
-local SLOT_SPACING  = 4
+local SLOT_SIZE     = 36
+local SLOT_SPACING  = 3
 local ICON_BORDER   = 2
 
-local LEFT_SLOTS    = { 1, 2, 3, 15, 5, 4, 19, 9 }
-local RIGHT_SLOTS   = { 10, 6, 7, 8, 11, 12, 13, 14 }
-local BOT_SLOTS     = { 16, 17, 18 }
+local LEFT_SLOTS    = { 1, 2, 3, 15, 5, 4, 19, 9 }   -- 8 slots
+local RIGHT_SLOTS   = { 10, 6, 7, 8, 11, 12, 13, 14 } -- 8 slots
+local BOT_SLOTS     = { 16, 17, 18 }                   -- MH, OH, Ranged
 
 local LIST_WIDTH    = 180
 local DOLL_WIDTH    = 330
-local FRAME_HEIGHT  = 480
 local FRAME_WIDTH   = LIST_WIDTH + DOLL_WIDTH + 30
+local DOLL_COL_H    = #LEFT_SLOTS * (SLOT_SIZE + SLOT_SPACING)
+local DOLL_H        = DOLL_COL_H + SLOT_SIZE + 16       -- columns + gap + bot row
+local TALENT_H      = 46                                 -- talent bar area
+local FRAME_HEIGHT  = 28 + 18 + 26 + 24 + 28 + 22       -- title + status + checkbox row + snap label
+                    + 30                                  -- dropdown
+                    + DOLL_H + TALENT_H                   -- paper doll + talents
+                    + 40                                  -- summary + padding
+FRAME_HEIGHT = math.max(FRAME_HEIGHT, 560)               -- floor
 
+----------------------------------------------------------------------
+-- Class / quality colours
+----------------------------------------------------------------------
 local CLASS_COLORS = RAID_CLASS_COLORS or {
     WARRIOR     = { r=0.78, g=0.61, b=0.43 },
     PALADIN     = { r=0.96, g=0.55, b=0.73 },
@@ -42,16 +52,38 @@ local QUALITY_COLORS = {
 }
 
 ----------------------------------------------------------------------
--- State
+-- ElvUI theme colours
+----------------------------------------------------------------------
+local ELVUI = {
+    bgMain     = { 0.07, 0.07, 0.07, 0.92 },
+    bgPanel    = { 0.05, 0.05, 0.05, 0.85 },
+    border     = { 0.15, 0.15, 0.15, 1 },
+    borderHl   = { 0.00, 0.44, 0.87, 0.8 },
+    accent     = { 0.00, 0.44, 0.87 },
+    statusBg   = { 0.08, 0.08, 0.08, 0.8 },
+    statusBar  = { 0.00, 0.44, 0.87, 0.85 },
+    statusDone = { 0.18, 0.70, 0.18, 0.85 },
+    text       = { 0.84, 0.84, 0.84 },
+    textDim    = { 0.50, 0.50, 0.50 },
+    slotBg     = { 0.10, 0.10, 0.10, 0.7 },
+    listHover  = { 1, 1, 1, 0.06 },
+    listSelect = { 0.00, 0.44, 0.87, 0.18 },
+}
+
+----------------------------------------------------------------------
+-- Frame refs
 ----------------------------------------------------------------------
 local browseFrame
 local memberButtons   = {}
 local slotButtons     = {}
 local charNameText, charDetailText, charGuildText, summaryLabel
+local talentFrame, talentIcons, talentTexts, talentSpecText
 local snapshotDropdown
 local memberScrollChild
-local scanStatusBar, scanStatusText, scanStatusPct
-local groupCheckbox
+local scanStatusBar, scanStatusText, scanStatusPct, scanStatusBg
+local groupCheckbox, themeCheckbox
+local dollFrame, dollBg
+local elvuiOverlays = {}  -- textures / objects we restyle on theme toggle
 
 local selectedSnapshotKey = nil
 local selectedMemberName  = nil
@@ -76,24 +108,76 @@ local function GetQualityFromLink(link)
 end
 
 ----------------------------------------------------------------------
+-- Pixel border helper (for ElvUI style)
+----------------------------------------------------------------------
+local function MakePixelBorder(frame, r, g, b, a, size)
+    size = size or 1
+    if frame._pxBorders then
+        for _, t in ipairs(frame._pxBorders) do
+            t:SetColorTexture(r, g, b, a)
+        end
+        return
+    end
+    frame._pxBorders = {}
+    local sides = {
+        {"TOPLEFT","BOTTOMLEFT", size,0, 0,0,0,0},       -- left
+        {"TOPRIGHT","BOTTOMRIGHT", size,0, 0,0,0,0},      -- right
+        {"TOPLEFT","TOPRIGHT", 0,size, 0,0,0,0},          -- top
+        {"BOTTOMLEFT","BOTTOMRIGHT", 0,size, 0,0,0,0},    -- bottom
+    }
+    for i, s in ipairs(sides) do
+        local t = frame:CreateTexture(nil, "BORDER")
+        t:SetColorTexture(r, g, b, a)
+        if i == 1 then     -- left
+            t:SetPoint("TOPLEFT", -size, size)
+            t:SetPoint("BOTTOMLEFT", -size, -size)
+            t:SetWidth(size)
+        elseif i == 2 then -- right
+            t:SetPoint("TOPRIGHT", size, size)
+            t:SetPoint("BOTTOMRIGHT", size, -size)
+            t:SetWidth(size)
+        elseif i == 3 then -- top
+            t:SetPoint("TOPLEFT", -size, size)
+            t:SetPoint("TOPRIGHT", size, size)
+            t:SetHeight(size)
+        elseif i == 4 then -- bottom
+            t:SetPoint("BOTTOMLEFT", -size, -size)
+            t:SetPoint("BOTTOMRIGHT", size, -size)
+            t:SetHeight(size)
+        end
+        table.insert(frame._pxBorders, t)
+    end
+end
+
+----------------------------------------------------------------------
 -- Create a gear slot button
 ----------------------------------------------------------------------
 local function CreateSlotButton(parent, slotId)
     local btn = CreateFrame("Button", nil, parent)
     btn:SetSize(SLOT_SIZE, SLOT_SIZE)
 
+    -- Background (empty slot texture)
     local bg = btn:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints()
     bg:SetTexture(AS.EMPTY_SLOT_TEXTURES[slotId]
                   or "Interface\\PaperDoll\\UI-PaperDoll-Slot-Chest")
     btn.bgTex = bg
 
+    -- ElvUI dark square background (hidden unless themed)
+    local elvBg = btn:CreateTexture(nil, "BACKGROUND", nil, -1)
+    elvBg:SetAllPoints()
+    elvBg:SetColorTexture(unpack(ELVUI.slotBg))
+    elvBg:Hide()
+    btn.elvBg = elvBg
+
+    -- Item icon
     local icon = btn:CreateTexture(nil, "ARTWORK")
     icon:SetPoint("TOPLEFT", ICON_BORDER, -ICON_BORDER)
     icon:SetPoint("BOTTOMRIGHT", -ICON_BORDER, ICON_BORDER)
     icon:Hide()
     btn.iconTex = icon
 
+    -- Quality border glow
     local border = btn:CreateTexture(nil, "OVERLAY")
     border:SetAllPoints()
     border:SetTexture("Interface\\Buttons\\UI-ActionButton-Border")
@@ -102,10 +186,12 @@ local function CreateSlotButton(parent, slotId)
     border:Hide()
     btn.borderTex = border
 
+    -- Highlight
     local hl = btn:CreateTexture(nil, "HIGHLIGHT")
     hl:SetAllPoints()
     hl:SetTexture("Interface\\Buttons\\ButtonHilight-Square")
     hl:SetBlendMode("ADD")
+    btn.hlTex = hl
 
     btn.slotId    = slotId
     btn.slotLabel = AS.SLOT_INFO[slotId] and AS.SLOT_INFO[slotId].label or "Slot"
@@ -154,8 +240,126 @@ local function SetSlotItem(btn, gearData)
     else
         btn.itemLink = nil
         btn.iconTex:Hide()
-        btn.bgTex:Show()
+        local isElv = AS.db and AS.db.options and AS.db.options.elvuiTheme
+        btn.bgTex:SetShown(not isElv)
         btn.borderTex:Hide()
+    end
+end
+
+----------------------------------------------------------------------
+-- THEME APPLICATION
+----------------------------------------------------------------------
+function AS.ApplyTheme()
+    if not browseFrame then return end
+    local elv = AS.db and AS.db.options and AS.db.options.elvuiTheme
+
+    if elv then
+        -- Main frame
+        browseFrame:SetBackdrop({
+            bgFile   = "Interface\\Buttons\\WHITE8X8",
+            edgeFile = "Interface\\Buttons\\WHITE8X8",
+            edgeSize = 1,
+        })
+        browseFrame:SetBackdropColor(unpack(ELVUI.bgMain))
+        browseFrame:SetBackdropBorderColor(unpack(ELVUI.border))
+
+        -- Hide default Blizzard chrome textures
+        if browseFrame.TitleBg       then browseFrame.TitleBg:Hide() end
+        if browseFrame.TopTileStreaky then browseFrame.TopTileStreaky:Hide() end
+        if browseFrame.Bg            then browseFrame.Bg:Hide() end
+        if browseFrame.InsetBg       then browseFrame.InsetBg:Hide() end
+        for _, region in pairs({browseFrame:GetRegions()}) do
+            if region.GetDrawLayer and region:GetDrawLayer() == "BORDER" then
+                region:SetAlpha(0)
+            end
+        end
+
+        -- Inset region
+        local inset = browseFrame.Inset
+        if inset then
+            for _, region in pairs({inset:GetRegions()}) do
+                region:SetAlpha(0)
+            end
+        end
+
+        -- Title
+        browseFrame.TitleText:SetTextColor(unpack(ELVUI.text))
+
+        -- Status bar
+        if scanStatusBg then scanStatusBg:SetColorTexture(unpack(ELVUI.statusBg)) end
+        if scanStatusBar then
+            scanStatusBar:SetStatusBarColor(unpack(ELVUI.statusBar))
+            MakePixelBorder(scanStatusBar, unpack(ELVUI.border))
+        end
+
+        -- Doll background
+        if dollBg then dollBg:SetColorTexture(unpack(ELVUI.bgPanel)) end
+
+        -- Slot buttons
+        for _, btn in pairs(slotButtons) do
+            btn.elvBg:Show()
+            btn.bgTex:Hide()
+            MakePixelBorder(btn, unpack(ELVUI.border))
+            btn.hlTex:SetTexture("Interface\\Buttons\\WHITE8X8")
+            btn.hlTex:SetAlpha(0.08)
+        end
+
+        -- Talent frame
+        if talentFrame then
+            talentFrame.bg:SetColorTexture(unpack(ELVUI.bgPanel))
+            MakePixelBorder(talentFrame, unpack(ELVUI.border))
+        end
+    else
+        -- Restore default Blizzard frame
+        browseFrame:SetBackdrop(nil)
+        if browseFrame.TitleBg       then browseFrame.TitleBg:Show() end
+        if browseFrame.TopTileStreaky then browseFrame.TopTileStreaky:Show() end
+        if browseFrame.Bg            then browseFrame.Bg:Show() end
+        if browseFrame.InsetBg       then browseFrame.InsetBg:Show() end
+        for _, region in pairs({browseFrame:GetRegions()}) do
+            if region.GetDrawLayer and region:GetDrawLayer() == "BORDER" then
+                region:SetAlpha(1)
+            end
+        end
+        local inset = browseFrame.Inset
+        if inset then
+            for _, region in pairs({inset:GetRegions()}) do
+                region:SetAlpha(1)
+            end
+        end
+        browseFrame.TitleText:SetTextColor(1, 0.82, 0)
+
+        if scanStatusBg then scanStatusBg:SetColorTexture(0.1, 0.1, 0.1, 0.6) end
+        if scanStatusBar then
+            scanStatusBar:SetStatusBarColor(0.26, 0.8, 0.26, 0.7)
+            if scanStatusBar._pxBorders then
+                for _, t in ipairs(scanStatusBar._pxBorders) do t:Hide() end
+            end
+        end
+
+        if dollBg then dollBg:SetColorTexture(0, 0, 0, 0.15) end
+
+        for _, btn in pairs(slotButtons) do
+            btn.elvBg:Hide()
+            if not btn.itemLink then btn.bgTex:Show() end
+            if btn._pxBorders then
+                for _, t in ipairs(btn._pxBorders) do t:Hide() end
+            end
+            btn.hlTex:SetTexture("Interface\\Buttons\\ButtonHilight-Square")
+            btn.hlTex:SetAlpha(1)
+        end
+
+        if talentFrame then
+            talentFrame.bg:SetColorTexture(0, 0, 0, 0.2)
+            if talentFrame._pxBorders then
+                for _, t in ipairs(talentFrame._pxBorders) do t:Hide() end
+            end
+        end
+    end
+
+    -- Update theme checkbox
+    if themeCheckbox then
+        themeCheckbox:SetChecked(elv and true or false)
     end
 end
 
@@ -183,8 +387,8 @@ local function CreateBrowseFrame()
     -- SCAN STATUS BAR
     --==============================================================
     local statusBar = CreateFrame("StatusBar", nil, f)
-    statusBar:SetPoint("TOPLEFT", f.InsetBg or f, "TOPLEFT", 8, -6)
-    statusBar:SetPoint("TOPRIGHT", f.InsetBg or f, "TOPRIGHT", -8, -6)
+    statusBar:SetPoint("TOPLEFT", 10, -28)
+    statusBar:SetPoint("RIGHT", f, "RIGHT", -10, 0)
     statusBar:SetHeight(18)
     statusBar:SetMinMaxValues(0, 1)
     statusBar:SetValue(0)
@@ -192,53 +396,70 @@ local function CreateBrowseFrame()
     statusBar:SetStatusBarColor(0.26, 0.8, 0.26, 0.7)
     scanStatusBar = statusBar
 
-    local statusBg = statusBar:CreateTexture(nil, "BACKGROUND")
-    statusBg:SetAllPoints()
-    statusBg:SetColorTexture(0.1, 0.1, 0.1, 0.6)
+    local sBg = statusBar:CreateTexture(nil, "BACKGROUND")
+    sBg:SetAllPoints()
+    sBg:SetColorTexture(0.1, 0.1, 0.1, 0.6)
+    scanStatusBg = sBg
 
-    local stxt = statusBar:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    stxt:SetPoint("LEFT", 6, 0)
-    stxt:SetText("Scanner idle")
-    scanStatusText = stxt
+    scanStatusText = statusBar:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    scanStatusText:SetPoint("LEFT", 6, 0)
+    scanStatusText:SetText("Scanner idle")
 
-    local spct = statusBar:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    spct:SetPoint("RIGHT", -6, 0)
-    spct:SetText("")
-    scanStatusPct = spct
+    scanStatusPct = statusBar:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    scanStatusPct:SetPoint("RIGHT", -6, 0)
 
     --==============================================================
-    -- GROUP CHECKBOX
+    -- CHECKBOX ROW  (group + theme)
     --==============================================================
-    local cb = CreateFrame("CheckButton", "ASGroupCheckbox", f,
-                           "UICheckButtonTemplate")
-    cb:SetPoint("TOPLEFT", statusBar, "BOTTOMLEFT", -2, -2)
-    cb:SetSize(24, 24)
-    cb.text = _G[cb:GetName() .. "Text"] or cb.Text
-    if cb.text then
-        cb.text:SetText("Also scan in party / group")
-        cb.text:SetFontObject("GameFontNormalSmall")
+    local cbRow = CreateFrame("Frame", nil, f)
+    cbRow:SetPoint("TOPLEFT", statusBar, "BOTTOMLEFT", -2, -1)
+    cbRow:SetPoint("RIGHT", f, "RIGHT", -10, 0)
+    cbRow:SetHeight(24)
+
+    -- Group checkbox
+    local gcb = CreateFrame("CheckButton", "ASGroupCB", cbRow,
+                            "UICheckButtonTemplate")
+    gcb:SetPoint("LEFT", 0, 0)
+    gcb:SetSize(22, 22)
+    gcb.text = _G[gcb:GetName() .. "Text"] or gcb.Text
+    if gcb.text then
+        gcb.text:SetText("Scan in group")
+        gcb.text:SetFontObject("GameFontNormalSmall")
     end
-    cb:SetChecked(AS.db and AS.db.options
-                  and AS.db.options.scanGroup or false)
-    cb:SetScript("OnClick", function(self)
+    gcb:SetChecked(AS.db and AS.db.options and AS.db.options.scanGroup or false)
+    gcb:SetScript("OnClick", function(self)
         if AS.db and AS.db.options then
             AS.db.options.scanGroup = self:GetChecked() and true or false
-            if AS.db.options.scanGroup then
-                AS.Print("Group scanning |cff00ff00ENABLED|r")
-            else
-                AS.Print("Group scanning |cffff4444DISABLED|r")
-            end
         end
     end)
-    groupCheckbox = cb
+    groupCheckbox = gcb
+
+    -- Theme checkbox
+    local tcb = CreateFrame("CheckButton", "ASThemeCB", cbRow,
+                            "UICheckButtonTemplate")
+    tcb:SetPoint("LEFT", gcb, "RIGHT", 110, 0)
+    tcb:SetSize(22, 22)
+    tcb.text = _G[tcb:GetName() .. "Text"] or tcb.Text
+    if tcb.text then
+        tcb.text:SetText("ElvUI Theme")
+        tcb.text:SetFontObject("GameFontNormalSmall")
+    end
+    tcb:SetChecked(AS.db and AS.db.options and AS.db.options.elvuiTheme or false)
+    tcb:SetScript("OnClick", function(self)
+        if AS.db and AS.db.options then
+            AS.db.options.elvuiTheme = self:GetChecked() and true or false
+            AS.ApplyTheme()
+        end
+    end)
+    themeCheckbox = tcb
 
     --==============================================================
     -- LEFT PANEL: Snapshot dropdown + member list
     --==============================================================
-    local leftTop = -52
     local leftPanel = CreateFrame("Frame", nil, f)
-    leftPanel:SetPoint("TOPLEFT", f.InsetBg or f, "TOPLEFT", 8, leftTop)
-    leftPanel:SetSize(LIST_WIDTH, FRAME_HEIGHT - 90)
+    leftPanel:SetPoint("TOPLEFT", cbRow, "BOTTOMLEFT", 2, -2)
+    leftPanel:SetPoint("BOTTOM", f, "BOTTOM", 0, 8)
+    leftPanel:SetWidth(LIST_WIDTH)
 
     local snapLabel = leftPanel:CreateFontString(nil, "OVERLAY",
                                                   "GameFontNormalSmall")
@@ -295,11 +516,12 @@ local function CreateBrowseFrame()
     memberScrollChild = child
 
     --==============================================================
-    -- RIGHT PANEL: Character info + paper doll
+    -- RIGHT PANEL: Char info + paper doll + talents + summary
     --==============================================================
     local rightPanel = CreateFrame("Frame", nil, f)
     rightPanel:SetPoint("TOPLEFT", leftPanel, "TOPRIGHT", 10, 0)
-    rightPanel:SetSize(DOLL_WIDTH, FRAME_HEIGHT - 90)
+    rightPanel:SetPoint("BOTTOM", f, "BOTTOM", 0, 8)
+    rightPanel:SetWidth(DOLL_WIDTH)
 
     charNameText = rightPanel:CreateFontString(nil, "OVERLAY",
                                                 "GameFontNormalLarge")
@@ -315,11 +537,11 @@ local function CreateBrowseFrame()
     charGuildText:SetTextColor(0.25, 1.0, 0.25)
 
     -- Paper doll container
-    local dollFrame = CreateFrame("Frame", nil, rightPanel)
-    dollFrame:SetPoint("TOP", charGuildText, "BOTTOM", 0, -10)
-    dollFrame:SetSize(DOLL_WIDTH, 340)
+    dollFrame = CreateFrame("Frame", nil, rightPanel)
+    dollFrame:SetPoint("TOP", charGuildText, "BOTTOM", 0, -8)
+    dollFrame:SetSize(DOLL_WIDTH, DOLL_H)
 
-    local dollBg = dollFrame:CreateTexture(nil, "BACKGROUND")
+    dollBg = dollFrame:CreateTexture(nil, "BACKGROUND")
     dollBg:SetAllPoints()
     dollBg:SetColorTexture(0, 0, 0, 0.15)
 
@@ -340,29 +562,73 @@ local function CreateBrowseFrame()
         slotButtons[sid] = btn
     end
 
-    -- Bottom row (centered)
+    -- Bottom row (MH / OH / Ranged) — centred below columns with gap
     local bw = #BOT_SLOTS * SLOT_SIZE + (#BOT_SLOTS - 1) * SLOT_SPACING
     local bx = (DOLL_WIDTH - bw) / 2
-    local by = -(#LEFT_SLOTS * (SLOT_SIZE + SLOT_SPACING) + 8)
+    local by = -(DOLL_COL_H + 10)   -- 10 px gap after columns
     for i, sid in ipairs(BOT_SLOTS) do
         local btn = CreateSlotButton(dollFrame, sid)
-        btn:SetPoint("TOPLEFT", bx + (i - 1) * (SLOT_SIZE + SLOT_SPACING), by)
+        btn:SetPoint("TOPLEFT", dollFrame, "TOPLEFT",
+                     bx + (i - 1) * (SLOT_SIZE + SLOT_SPACING), by)
         slotButtons[sid] = btn
     end
 
-    -- Centre placeholder
+    -- Centre silhouette
     local sil = dollFrame:CreateFontString(nil, "ARTWORK",
                                             "GameFontDisableLarge")
-    sil:SetPoint("CENTER", 0, -15)
+    sil:SetPoint("CENTER", 0, 10)
     sil:SetText("[ Character ]")
-    sil:SetAlpha(0.2)
+    sil:SetAlpha(0.15)
 
-    -- Summary label
+    --==============================================================
+    -- TALENT BAR (below paper doll)
+    --==============================================================
+    talentFrame = CreateFrame("Frame", nil, rightPanel)
+    talentFrame:SetPoint("TOP", dollFrame, "BOTTOM", 0, -6)
+    talentFrame:SetSize(DOLL_WIDTH, TALENT_H)
+
+    local tBg = talentFrame:CreateTexture(nil, "BACKGROUND")
+    tBg:SetAllPoints()
+    tBg:SetColorTexture(0, 0, 0, 0.2)
+    talentFrame.bg = tBg
+
+    -- Spec name
+    talentSpecText = talentFrame:CreateFontString(nil, "OVERLAY",
+                                                   "GameFontNormal")
+    talentSpecText:SetPoint("TOP", 0, -4)
+
+    -- 3 tree icons + point labels
+    talentIcons = {}
+    talentTexts = {}
+    local treeWidth = 32
+    local treeGap   = 20
+    local totalTW   = 3 * treeWidth + 2 * treeGap
+    local treeStart = (DOLL_WIDTH - totalTW) / 2
+
+    for t = 1, 3 do
+        local ic = talentFrame:CreateTexture(nil, "ARTWORK")
+        ic:SetSize(treeWidth, treeWidth)
+        ic:SetPoint("TOPLEFT", talentFrame, "TOPLEFT",
+                    treeStart + (t - 1) * (treeWidth + treeGap), -14)
+        ic:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        ic:Hide()
+        talentIcons[t] = ic
+
+        local tx = talentFrame:CreateFontString(nil, "OVERLAY",
+                                                 "GameFontHighlightSmall")
+        tx:SetPoint("TOP", ic, "BOTTOM", 0, -1)
+        tx:SetText("")
+        talentTexts[t] = tx
+    end
+
+    --==============================================================
+    -- SUMMARY LABEL
+    --==============================================================
     summaryLabel = rightPanel:CreateFontString(nil, "OVERLAY",
                                                 "GameFontNormalSmall")
-    summaryLabel:SetPoint("BOTTOMLEFT", 4, 4)
+    summaryLabel:SetPoint("TOP", talentFrame, "BOTTOM", 0, -6)
     summaryLabel:SetWidth(DOLL_WIDTH - 8)
-    summaryLabel:SetJustifyH("LEFT")
+    summaryLabel:SetJustifyH("CENTER")
 
     browseFrame = f
     f:Hide()
@@ -373,7 +639,8 @@ end
 ----------------------------------------------------------------------
 local function UpdateScanStatus()
     if not browseFrame or not browseFrame:IsShown() then return end
-    local s = AS.session
+    local s  = AS.session
+    local elv = AS.db and AS.db.options and AS.db.options.elvuiTheme
     if s.active then
         local total = math.max(s.totalInRaid, 1)
         local pct   = s.totalCaptured / total
@@ -381,9 +648,17 @@ local function UpdateScanStatus()
         scanStatusText:SetText("Scanning: " .. (s.snapshotKey or ""))
         scanStatusPct:SetText(s.totalCaptured .. " / " .. s.totalInRaid)
         if pct >= 1 then
-            scanStatusBar:SetStatusBarColor(0.26, 0.8, 0.26, 0.7)
+            if elv then
+                scanStatusBar:SetStatusBarColor(unpack(ELVUI.statusDone))
+            else
+                scanStatusBar:SetStatusBarColor(0.26, 0.8, 0.26, 0.7)
+            end
         else
-            scanStatusBar:SetStatusBarColor(0.9, 0.7, 0.0, 0.7)
+            if elv then
+                scanStatusBar:SetStatusBarColor(unpack(ELVUI.statusBar))
+            else
+                scanStatusBar:SetStatusBarColor(0.9, 0.7, 0.0, 0.7)
+            end
         end
     else
         scanStatusBar:SetValue(0)
@@ -405,6 +680,7 @@ function AS.RefreshMemberList()
     local snap  = AS.db.snapshots[selectedSnapshotKey]
     if not snap then return end
 
+    local elv = AS.db and AS.db.options and AS.db.options.elvuiTheme
     local yOff, btnH = 0, 18
     for _, name in ipairs(names) do
         local member = snap.members[name]
@@ -414,11 +690,19 @@ function AS.RefreshMemberList()
 
         local hl = btn:CreateTexture(nil, "HIGHLIGHT")
         hl:SetAllPoints()
-        hl:SetColorTexture(1, 1, 1, 0.1)
+        if elv then
+            hl:SetColorTexture(unpack(ELVUI.listHover))
+        else
+            hl:SetColorTexture(1, 1, 1, 0.1)
+        end
 
         local sel = btn:CreateTexture(nil, "BACKGROUND")
         sel:SetAllPoints()
-        sel:SetColorTexture(1, 1, 1, 0.15)
+        if elv then
+            sel:SetColorTexture(unpack(ELVUI.listSelect))
+        else
+            sel:SetColorTexture(1, 1, 1, 0.15)
+        end
         sel:Hide()
         btn.selTex = sel
 
@@ -429,12 +713,19 @@ function AS.RefreshMemberList()
         txt:SetText(name)
         txt:SetTextColor(cc.r, cc.g, cc.b)
 
-        local gc = 0
-        for _ in pairs(member.gear) do gc = gc + 1 end
+        -- Spec shorthand on right if talents exist
+        local rightLabel = ""
+        if member.talents and member.talents.points ~= "" then
+            rightLabel = member.talents.points
+        else
+            local gc = 0
+            for _ in pairs(member.gear) do gc = gc + 1 end
+            rightLabel = gc .. " items"
+        end
         local ct = btn:CreateFontString(nil, "OVERLAY",
                                          "GameFontDisableSmall")
         ct:SetPoint("RIGHT", -4, 0)
-        ct:SetText(gc .. " items")
+        ct:SetText(rightLabel)
 
         btn.memberName = name
         btn:SetScript("OnClick", function(self)
@@ -461,7 +752,12 @@ function AS.ClearPaperDoll()
     charNameText:SetText("")
     charDetailText:SetText("")
     charGuildText:SetText("")
-    if summaryLabel then summaryLabel:SetText("") end
+    if summaryLabel   then summaryLabel:SetText("") end
+    if talentSpecText then talentSpecText:SetText("") end
+    for t = 1, 3 do
+        if talentIcons[t] then talentIcons[t]:Hide() end
+        if talentTexts[t] then talentTexts[t]:SetText("") end
+    end
     for _, btn in pairs(slotButtons) do SetSlotItem(btn, nil) end
 end
 
@@ -473,6 +769,7 @@ function AS.RefreshPaperDoll()
     local member = snap.members[selectedMemberName]
     if not member then return end
 
+    -- Character info
     local cc = CLASS_COLORS[member.class] or { r=1, g=1, b=1 }
     charNameText:SetText(member.name)
     charNameText:SetTextColor(cc.r, cc.g, cc.b)
@@ -482,6 +779,7 @@ function AS.RefreshPaperDoll()
     charGuildText:SetText(member.guild ~= ""
                           and ("<" .. member.guild .. ">") or "")
 
+    -- Gear slots
     local enchants, gems, items = 0, 0, 0
     for sid, btn in pairs(slotButtons) do
         local gd = member.gear[sid]
@@ -498,6 +796,24 @@ function AS.RefreshPaperDoll()
         end
     end
 
+    -- Talents
+    local tal = member.talents
+    if tal and tal.trees and #tal.trees > 0 then
+        local specColor = "|cff" .. string.format("%02x%02x%02x",
+            cc.r * 255, cc.g * 255, cc.b * 255)
+        talentSpecText:SetText(specColor .. (tal.spec or "") .. "|r  "
+                               .. (tal.points or ""))
+        for t = 1, math.min(3, #tal.trees) do
+            local tree = tal.trees[t]
+            if tree.icon and tree.icon ~= "" then
+                talentIcons[t]:SetTexture(tree.icon)
+                talentIcons[t]:Show()
+            end
+            talentTexts[t]:SetText(tree.name .. "\n" .. tree.points)
+        end
+    end
+
+    -- Summary
     local s = items .. " items"
     if enchants > 0 or gems > 0 then
         s = s .. "  |  "
@@ -547,15 +863,11 @@ end
 ----------------------------------------------------------------------
 function AS.OnMemberCaptured()
     if not browseFrame or not browseFrame:IsShown() then return end
-    local s = AS.session
-    if s.snapshotKey and selectedSnapshotKey == s.snapshotKey then
+    if AS.session.snapshotKey and selectedSnapshotKey == AS.session.snapshotKey then
         AS.RefreshMemberList()
     end
 end
 
-----------------------------------------------------------------------
--- Checkbox sync
-----------------------------------------------------------------------
 function AS.UpdateGroupCheckbox()
     if groupCheckbox and AS.db and AS.db.options then
         groupCheckbox:SetChecked(AS.db.options.scanGroup)
@@ -573,7 +885,11 @@ function AS.ToggleBrowseFrame()
         if groupCheckbox and AS.db and AS.db.options then
             groupCheckbox:SetChecked(AS.db.options.scanGroup)
         end
+        if themeCheckbox and AS.db and AS.db.options then
+            themeCheckbox:SetChecked(AS.db.options.elvuiTheme)
+        end
         browseFrame:Show()
+        AS.ApplyTheme()
         if not selectedSnapshotKey then
             if AS.session.snapshotKey then
                 selectedSnapshotKey = AS.session.snapshotKey
@@ -591,7 +907,7 @@ function AS.ToggleBrowseFrame()
 end
 
 ----------------------------------------------------------------------
--- Minimap button
+-- MINIMAP BUTTON  (fully draggable around minimap, position saved)
 ----------------------------------------------------------------------
 local function CreateMinimapButton()
     local btn = CreateFrame("Button", "ASMinimapButton", Minimap)
@@ -601,6 +917,8 @@ local function CreateMinimapButton()
     btn:SetHighlightTexture(
         "Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
     btn:SetMovable(true)
+    btn:EnableMouse(true)
+    btn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
     btn:RegisterForDrag("LeftButton")
 
     local icon = btn:CreateTexture(nil, "ARTWORK")
@@ -618,29 +936,45 @@ local function CreateMinimapButton()
     bg:SetPoint("CENTER")
     bg:SetTexture("Interface\\Minimap\\UI-Minimap-Background")
 
-    local angle = 220
     local function UpdatePos()
+        local angle = AS.db and AS.db.options
+                      and AS.db.options.minimapAngle or 220
         local r = math.rad(angle)
         btn:ClearAllPoints()
         btn:SetPoint("CENTER", Minimap, "CENTER",
                      math.cos(r) * 80, math.sin(r) * 80)
     end
-    UpdatePos()
 
-    btn:SetScript("OnDragStart", function(self) self.dragging = true end)
-    btn:SetScript("OnDragStop",  function(self) self.dragging = false end)
-    btn:SetScript("OnUpdate", function(self)
-        if not self.dragging then return end
-        local mx, my = Minimap:GetCenter()
-        local cx, cy = GetCursorPosition()
-        local s = Minimap:GetEffectiveScale()
-        angle = math.deg(math.atan2(cy/s - my, cx/s - mx))
-        UpdatePos()
+    btn:SetScript("OnDragStart", function(self)
+        self.dragging = true
+        self:SetScript("OnUpdate", function(self)
+            local mx, my = Minimap:GetCenter()
+            local cx, cy = GetCursorPosition()
+            local s = Minimap:GetEffectiveScale()
+            local angle = math.deg(math.atan2(cy / s - my, cx / s - mx))
+            if AS.db and AS.db.options then
+                AS.db.options.minimapAngle = angle
+            end
+            UpdatePos()
+        end)
+    end)
+
+    btn:SetScript("OnDragStop", function(self)
+        self.dragging = false
+        self:SetScript("OnUpdate", nil)
     end)
 
     btn:SetScript("OnClick", function(self, button)
         if button == "LeftButton" then
             AS.ToggleBrowseFrame()
+        elseif button == "RightButton" then
+            if AS.db and AS.db.options then
+                AS.db.options.elvuiTheme = not AS.db.options.elvuiTheme
+                if AS.ApplyTheme then AS.ApplyTheme() end
+                AS.Print("ElvUI theme "
+                    .. (AS.db.options.elvuiTheme
+                        and "|cff00ff00ON|r" or "|cffff4444OFF|r"))
+            end
         end
     end)
 
@@ -654,10 +988,15 @@ local function CreateMinimapButton()
         else
             GameTooltip:AddLine("Idle", 0.6, 0.6, 0.6)
         end
-        GameTooltip:AddLine("|cffffffffClick|r to browse", 0.8, 0.8, 0.8)
+        GameTooltip:AddLine("|cffffffffLeft-Click|r  Browse", 0.8, 0.8, 0.8)
+        GameTooltip:AddLine("|cffffffffRight-Click|r Toggle ElvUI theme", 0.8, 0.8, 0.8)
+        GameTooltip:AddLine("|cffffffffDrag|r  Move button", 0.8, 0.8, 0.8)
         GameTooltip:Show()
     end)
     btn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+    -- Apply saved position after a short delay to ensure Minimap is ready
+    C_Timer.After(0.5, UpdatePos)
 end
 
 ----------------------------------------------------------------------

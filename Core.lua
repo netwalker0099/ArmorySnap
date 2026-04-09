@@ -1,6 +1,6 @@
 ----------------------------------------------------------------------
--- ArmorySnap  –  Core.lua
--- Passive background scanner, inspect queue, data management
+-- ArmorySnap  –  Core.lua  v1.1.0
+-- Passive scanner, talent capture, inspect queue, data management
 ----------------------------------------------------------------------
 local ADDON_NAME = "ArmorySnap"
 local AS = {}
@@ -29,7 +29,7 @@ AS.SLOT_INFO = {
     [15] = { name = "BackSlot",          label = "Back" },
     [16] = { name = "MainHandSlot",      label = "Main Hand" },
     [17] = { name = "SecondaryHandSlot", label = "Off Hand" },
-    [18] = { name = "RangedSlot",        label = "Ranged" },
+    [18] = { name = "RangedSlot",        label = "Ranged / Relic" },
     [19] = { name = "TabardSlot",        label = "Tabard" },
 }
 
@@ -38,23 +38,22 @@ AS.EMPTY_SLOT_TEXTURES = {}
 ----------------------------------------------------------------------
 -- Tunables
 ----------------------------------------------------------------------
-local SCAN_TICK        = 3     -- seconds between inspect attempts
-local RETRY_COOLDOWN   = 120   -- seconds after a full pass before retrying failures
-local ROSTER_CHECK     = 10    -- seconds between roster-change checks once complete
-local INSPECT_TIMEOUT  = 4     -- seconds before giving up on one inspect
+local SCAN_TICK        = 3
+local RETRY_COOLDOWN   = 120
+local ROSTER_CHECK     = 10
+local INSPECT_TIMEOUT  = 4
 
 ----------------------------------------------------------------------
 -- State
 ----------------------------------------------------------------------
 AS.db = nil
 
--- Session: the live snapshot being built for the current zone
 AS.session = {
     active       = false,
     snapshotKey  = nil,
-    captured     = {},     -- [charName] = true
-    pending      = {},     -- ordered unitIds left this pass
-    failed       = {},     -- unitIds that failed this pass
+    captured     = {},
+    pending      = {},
+    failed       = {},
     inspecting   = false,
     currentUnit  = nil,
     passComplete = false,
@@ -94,23 +93,16 @@ end
 ----------------------------------------------------------------------
 function AS.ShouldAutoScan()
     local inInstance, instanceType = IsInInstance()
-
-    -- Always scan inside raid instances (10m and 25m)
-    if inInstance and instanceType == "raid" then
-        return true
-    end
-
-    -- "Scan in group" checkbox: also scan in any party or raid group
+    if inInstance and instanceType == "raid" then return true end
     if AS.db and AS.db.options and AS.db.options.scanGroup then
         local size = GetGroupSize()
         if size > 0 then return true end
     end
-
     return false
 end
 
 ----------------------------------------------------------------------
--- Session key (zone + timestamp)
+-- Session key
 ----------------------------------------------------------------------
 local function MakeSessionKey()
     local zone = GetRealZoneText() or "Unknown"
@@ -143,6 +135,47 @@ local function CaptureGear(unit)
 end
 
 ----------------------------------------------------------------------
+-- Capture talents for a unit
+-- TBC API: GetTalentTabInfo(tabIndex, inspect, pet)
+--   returns: name, iconTexture, pointsSpent, background, ...
+----------------------------------------------------------------------
+local function CaptureTalents(isInspect)
+    local talents = {
+        trees  = {},     -- { {name, icon, points}, {name, icon, points}, {name, icon, points} }
+        spec   = "",     -- name of the tree with the most points
+        points = "",     -- "5/51/15" style string
+    }
+    local maxPts, maxTree = 0, ""
+    local ptsStrParts = {}
+
+    for tab = 1, GetNumTalentTabs(isInspect) or 3 do
+        local tName, tIcon, tPts, tBg
+        if isInspect then
+            tName, tIcon, tPts, tBg = GetTalentTabInfo(tab, true)
+        else
+            tName, tIcon, tPts, tBg = GetTalentTabInfo(tab, false)
+        end
+        tName = tName or ("Tree " .. tab)
+        tPts  = tPts or 0
+        tIcon = tIcon or ""
+        table.insert(talents.trees, {
+            name   = tName,
+            icon   = tIcon,
+            points = tPts,
+        })
+        table.insert(ptsStrParts, tostring(tPts))
+        if tPts > maxPts then
+            maxPts  = tPts
+            maxTree = tName
+        end
+    end
+
+    talents.spec   = maxTree
+    talents.points = table.concat(ptsStrParts, "/")
+    return talents
+end
+
+----------------------------------------------------------------------
 -- Capture character metadata
 ----------------------------------------------------------------------
 local function CaptureCharInfo(unit)
@@ -150,13 +183,14 @@ local function CaptureCharInfo(unit)
     if realm and realm ~= "" then name = name .. "-" .. realm end
     local _, classFile = UnitClass(unit)
     return {
-        name   = name or "Unknown",
-        class  = classFile or "WARRIOR",
-        race   = UnitRace(unit) or "",
-        level  = UnitLevel(unit) or 0,
-        guild  = GetGuildInfo(unit) or "",
-        sex    = UnitSex(unit) or 1,
-        gear   = {},
+        name    = name or "Unknown",
+        class   = classFile or "WARRIOR",
+        race    = UnitRace(unit) or "",
+        level   = UnitLevel(unit) or 0,
+        guild   = GetGuildInfo(unit) or "",
+        sex     = UnitSex(unit) or 1,
+        gear    = {},
+        talents = nil,
     }
 end
 
@@ -205,10 +239,8 @@ local function BuildPendingQueue()
     local s = AS.session
     s.pending = {}
     s.failed  = {}
-
     local size, groupType = GetGroupSize()
     s.totalInRaid = size
-
     local added = {}
 
     for i = 1, size do
@@ -220,7 +252,6 @@ local function BuildPendingQueue()
         else
             unit = "player"
         end
-
         if unit and UnitExists(unit) then
             local uName = UnitName(unit)
             local realm = select(2, UnitName(unit))
@@ -231,8 +262,6 @@ local function BuildPendingQueue()
             end
         end
     end
-
-    -- party mode: ensure player is included
     if groupType == "party" then
         local pName = UnitName("player")
         if pName and not s.captured[pName] and not added[pName] then
@@ -288,38 +317,46 @@ local function OnInspectReady(guid)
     local snap = AS.db.snapshots[s.snapshotKey]
     if not snap then FinishInspect(); return end
 
-    local charInfo  = CaptureCharInfo(unit)
-    charInfo.gear   = CaptureGear(unit)
+    local charInfo    = CaptureCharInfo(unit)
+    charInfo.gear     = CaptureGear(unit)
+    charInfo.talents  = CaptureTalents(true)  -- inspect = true
     snap.members[charInfo.name] = charInfo
     s.captured[charInfo.name]   = true
     UpdateCounts()
 
     local gc = 0
     for _ in pairs(charInfo.gear) do gc = gc + 1 end
+    local specStr = ""
+    if charInfo.talents and charInfo.talents.spec ~= "" then
+        specStr = "  " .. charInfo.talents.points .. " " .. charInfo.talents.spec
+    end
     Print("  Scanned |cffffffff" .. charInfo.name .. "|r (" .. gc
-          .. " items)  [" .. s.totalCaptured .. "/" .. s.totalInRaid .. "]")
+          .. " items" .. specStr .. ")  [" .. s.totalCaptured .. "/" .. s.totalInRaid .. "]")
 
     FinishInspect()
-
     if AS.OnMemberCaptured then AS.OnMemberCaptured() end
 end
 
 local function TryInspectUnit(unit)
     local s = AS.session
-
     if not UnitExists(unit) or not UnitIsConnected(unit) then return false end
 
-    -- Self — no inspect needed
+    -- Self
     if UnitIsUnit(unit, "player") then
         EnsureSessionSnapshot()
         local snap = AS.db.snapshots[s.snapshotKey]
         if snap then
             local ci = CaptureCharInfo(unit)
-            ci.gear  = CaptureGear(unit)
+            ci.gear    = CaptureGear(unit)
+            ci.talents = CaptureTalents(false) -- inspect = false (self)
             snap.members[ci.name] = ci
             s.captured[ci.name]   = true
             UpdateCounts()
-            Print("  Scanned |cffffffff" .. ci.name .. "|r (self)  ["
+            local specStr = ""
+            if ci.talents and ci.talents.spec ~= "" then
+                specStr = "  " .. ci.talents.points .. " " .. ci.talents.spec
+            end
+            Print("  Scanned |cffffffff" .. ci.name .. "|r (self" .. specStr .. ")  ["
                   .. s.totalCaptured .. "/" .. s.totalInRaid .. "]")
             if AS.OnMemberCaptured then AS.OnMemberCaptured() end
         end
@@ -347,7 +384,6 @@ local lastZone = nil
 local function ScannerTick()
     local s = AS.session
 
-    -- 1. Should we be scanning?
     if not AS.ShouldAutoScan() then
         if s.active then
             Print("Left scannable area — pausing.")
@@ -356,7 +392,6 @@ local function ScannerTick()
         return
     end
 
-    -- 2. Zone change → new session
     local zone = GetRealZoneText() or ""
     if zone ~= lastZone then
         if lastZone and s.snapshotKey then
@@ -366,7 +401,6 @@ local function ScannerTick()
         lastZone = zone
     end
 
-    -- 3. Activate
     if not s.active then
         s.active = true
         EnsureSessionSnapshot()
@@ -377,10 +411,8 @@ local function ScannerTick()
         end
     end
 
-    -- 4. Busy?
     if s.inspecting then return end
 
-    -- 5. Pass complete → manage cooldowns
     if s.passComplete then
         s.rosterClock = s.rosterClock - SCAN_TICK
         if s.rosterClock <= 0 then
@@ -392,7 +424,6 @@ local function ScannerTick()
                       .. #s.pending .. " new/remaining members.")
             end
         end
-
         if #s.failed > 0 then
             s.retryClock = s.retryClock - SCAN_TICK
             if s.retryClock <= 0 then
@@ -406,7 +437,6 @@ local function ScannerTick()
         return
     end
 
-    -- 6. Next target
     while #s.pending > 0 do
         local unit = table.remove(s.pending, 1)
         if UnitExists(unit) then
@@ -421,7 +451,6 @@ local function ScannerTick()
         end
     end
 
-    -- 7. Pass done
     s.passComplete = true
     UpdateCounts()
     if #s.failed > 0 then
@@ -439,7 +468,7 @@ local function ScannerTick()
 end
 
 ----------------------------------------------------------------------
--- Manual snapshot (immediate, separate from passive session)
+-- Manual snapshot
 ----------------------------------------------------------------------
 function AS.TakeManualSnapshot(label)
     local size, groupType = GetGroupSize()
@@ -473,7 +502,9 @@ function AS.TakeManualSnapshot(label)
         end
         local unit = queue[idx]
         if UnitIsUnit(unit, "player") then
-            local ci = CaptureCharInfo(unit); ci.gear = CaptureGear(unit)
+            local ci = CaptureCharInfo(unit)
+            ci.gear    = CaptureGear(unit)
+            ci.talents = CaptureTalents(false)
             snap.members[ci.name] = ci; captured = captured + 1
             DoNext()
         elseif UnitExists(unit) and CheckInteractDistance(unit, 1) then
@@ -485,7 +516,9 @@ function AS.TakeManualSnapshot(label)
                 if guid and UnitGUID(unit) ~= guid then return end
                 waiting = false; self:UnregisterAllEvents()
                 if timer then timer:Cancel() end
-                local ci = CaptureCharInfo(unit); ci.gear = CaptureGear(unit)
+                local ci = CaptureCharInfo(unit)
+                ci.gear    = CaptureGear(unit)
+                ci.talents = CaptureTalents(true)
                 snap.members[ci.name] = ci; captured = captured + 1
                 ClearInspectPlayer()
                 C_Timer.After(0.5, DoNext)
@@ -505,7 +538,7 @@ function AS.TakeManualSnapshot(label)
 end
 
 ----------------------------------------------------------------------
--- Snapshot helpers (for UI / slash commands)
+-- Snapshot helpers
 ----------------------------------------------------------------------
 function AS.GetSnapshotKeys()
     local keys = {}
@@ -551,9 +584,10 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
         AS.db = ArmorySnapDB
         if not AS.db.snapshots then AS.db.snapshots = {} end
         if not AS.db.options   then AS.db.options   = {} end
-        if AS.db.options.scanGroup == nil then
-            AS.db.options.scanGroup = false
-        end
+        if AS.db.options.scanGroup  == nil then AS.db.options.scanGroup  = false end
+        if AS.db.options.elvuiTheme == nil then AS.db.options.elvuiTheme = false end
+        if AS.db.options.minimapAngle == nil then AS.db.options.minimapAngle = 220 end
+
         CacheEmptyTextures()
         C_Timer.NewTicker(SCAN_TICK, ScannerTick)
         Print("Loaded — auto-scan active in raid instances.")
@@ -620,6 +654,15 @@ SlashCmdList["ARMORYSNAP"] = function(msg)
         end
         if AS.UpdateGroupCheckbox then AS.UpdateGroupCheckbox() end
 
+    elseif cmd == "elvui" or cmd == "theme" then
+        AS.db.options.elvuiTheme = not AS.db.options.elvuiTheme
+        if AS.db.options.elvuiTheme then
+            Print("ElvUI theme |cff00ff00ENABLED|r — reopen browser to apply.")
+        else
+            Print("ElvUI theme |cffff4444DISABLED|r — reopen browser to apply.")
+        end
+        if AS.ApplyTheme then AS.ApplyTheme() end
+
     elseif cmd == "status" then
         local s = AS.session
         if s.active then
@@ -635,6 +678,8 @@ SlashCmdList["ARMORYSNAP"] = function(msg)
         end
         Print("Group scan: " .. (AS.db.options.scanGroup
               and "|cff00ff00ON|r" or "|cffff4444OFF|r"))
+        Print("ElvUI theme: " .. (AS.db.options.elvuiTheme
+              and "|cff00ff00ON|r" or "|cffff4444OFF|r"))
 
     elseif cmd == "reset" then
         AS.ResetSession()
@@ -648,6 +693,7 @@ SlashCmdList["ARMORYSNAP"] = function(msg)
         Print("  |cfffff000/as list|r            – List saved snapshots")
         Print("  |cfffff000/as delete <n>|r   – Delete a snapshot")
         Print("  |cfffff000/as group|r           – Toggle group scanning")
+        Print("  |cfffff000/as theme|r           – Toggle ElvUI theme")
         Print("  |cfffff000/as status|r          – Show scanner status")
         Print("  |cfffff000/as reset|r           – Reset current session")
     end
