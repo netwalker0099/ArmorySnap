@@ -255,13 +255,15 @@ function AS.ApplyTheme()
 
     if elv then
         -- Main frame
-        browseFrame:SetBackdrop({
-            bgFile   = "Interface\\Buttons\\WHITE8X8",
-            edgeFile = "Interface\\Buttons\\WHITE8X8",
-            edgeSize = 1,
-        })
-        browseFrame:SetBackdropColor(unpack(ELVUI.bgMain))
-        browseFrame:SetBackdropBorderColor(unpack(ELVUI.border))
+        if browseFrame.SetBackdrop then
+            browseFrame:SetBackdrop({
+                bgFile   = "Interface\\Buttons\\WHITE8X8",
+                edgeFile = "Interface\\Buttons\\WHITE8X8",
+                edgeSize = 1,
+            })
+            browseFrame:SetBackdropColor(unpack(ELVUI.bgMain))
+            browseFrame:SetBackdropBorderColor(unpack(ELVUI.border))
+        end
 
         -- Hide default Blizzard chrome textures
         if browseFrame.TitleBg       then browseFrame.TitleBg:Hide() end
@@ -311,7 +313,9 @@ function AS.ApplyTheme()
         end
     else
         -- Restore default Blizzard frame
-        browseFrame:SetBackdrop(nil)
+        if browseFrame.SetBackdrop then
+            browseFrame:SetBackdrop(nil)
+        end
         if browseFrame.TitleBg       then browseFrame.TitleBg:Show() end
         if browseFrame.TopTileStreaky then browseFrame.TopTileStreaky:Show() end
         if browseFrame.Bg            then browseFrame.Bg:Show() end
@@ -370,7 +374,7 @@ local function CreateBrowseFrame()
     if browseFrame then return end
 
     local f = CreateFrame("Frame", "ArmorySnapBrowseFrame", UIParent,
-                          "BasicFrameTemplateWithInset")
+                          "BasicFrameTemplateWithInset, BackdropTemplate")
     f:SetSize(FRAME_WIDTH, FRAME_HEIGHT)
     f:SetPoint("CENTER")
     f:SetMovable(true)
