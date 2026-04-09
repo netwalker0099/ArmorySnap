@@ -142,8 +142,8 @@ end
 
 ----------------------------------------------------------------------
 -- Capture talents for a unit
--- TBC API: GetTalentTabInfo(tabIndex, inspect, pet)
---   returns: name, iconTexture, pointsSpent, background, ...
+-- Anniversary API: GetTalentTabInfo(tabIndex [, isInspect])
+--   returns: id, name, description, icon, pointsSpent, background, ...
 ----------------------------------------------------------------------
 local function CaptureTalents(isInspect)
     local talents = {
@@ -154,9 +154,6 @@ local function CaptureTalents(isInspect)
     local maxPts, maxTree = 0, ""
     local ptsStrParts = {}
 
-    -- TBC Anniversary API:
-    --   Self:    GetNumTalentTabs()        / GetTalentTabInfo(tab)
-    --   Inspect: GetNumTalentTabs(true)    / GetTalentTabInfo(tab, true)
     local ok, numTabs
     if isInspect then
         ok, numTabs = pcall(GetNumTalentTabs, true)
@@ -167,11 +164,13 @@ local function CaptureTalents(isInspect)
     numTabs = tonumber(numTabs) or 3
 
     for tab = 1, numTabs do
-        local tOk, tName, tIcon, tPts, tBg
+        local tOk, tId, tName, tDesc, tIcon, tPts, tBg
         if isInspect then
-            tOk, tName, tIcon, tPts, tBg = pcall(GetTalentTabInfo, tab, true)
+            tOk, tId, tName, tDesc, tIcon, tPts, tBg =
+                pcall(GetTalentTabInfo, tab, true)
         else
-            tOk, tName, tIcon, tPts, tBg = pcall(GetTalentTabInfo, tab)
+            tOk, tId, tName, tDesc, tIcon, tPts, tBg =
+                pcall(GetTalentTabInfo, tab)
         end
         if not tOk then
             tName, tIcon, tPts = "Tree " .. tab, "", 0
