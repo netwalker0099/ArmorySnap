@@ -149,41 +149,13 @@ end
 ----------------------------------------------------------------------
 
 -- Sum individual talent ranks for a tab (fallback when pointsSpent=0)
--- Anniversary GetTalentInfo returns:
---   id, name, icon, tier, column, rank, maxRank, ...  (rank at 6)
--- Classic GetTalentInfo returns:
---   name, icon, tier, column, rank, maxRank, ...       (rank at 5)
--- Detect by checking if first return is a number (id) or string (name)
+-- Iterates talents 1-30, ignoring GetNumTalents which may return 0
+-- for inspected targets. Breaks when GetTalentInfo returns nil.
 local function SumTalentPoints(tab, isInspect)
     local total = 0
-    local ok, numTalents
-    if isInspect then
-        ok, numTalents = pcall(GetNumTalents, tab, true)
-    else
-        ok, numTalents = pcall(GetNumTalents, tab)
-    end
-    if not ok or not numTalents then return 0 end
-    numTalents = tonumber(numTalents) or 0
+    local rankIdx = nil  -- will detect on first valid result
 
-    -- Probe first talent to detect return layout
-    local rankIdx = 5  -- classic default
-    if numTalents > 0 then
-        local pOk, pResults
-        if isInspect then
-            pOk, pResults = pcall(function()
-                return { GetTalentInfo(tab, 1, true) }
-            end)
-        else
-            pOk, pResults = pcall(function()
-                return { GetTalentInfo(tab, 1) }
-            end)
-        end
-        if pOk and pResults and type(pResults[1]) == "number" then
-            rankIdx = 6  -- id is prepended, shift by 1
-        end
-    end
-
-    for i = 1, numTalents do
+    for i = 1, 30 do
         local tOk, results
         if isInspect then
             tOk, results = pcall(function()
@@ -194,10 +166,23 @@ local function SumTalentPoints(tab, isInspect)
                 return { GetTalentInfo(tab, i) }
             end)
         end
-        if tOk and results then
-            local rank = tonumber(results[rankIdx]) or 0
-            total = total + rank
+
+        -- Break if call failed or returned nothing useful
+        if not tOk or not results or #results < 4 then break end
+        -- Break if first meaningful field is nil (no more talents)
+        if results[1] == nil then break end
+
+        -- Detect layout once from first result
+        if rankIdx == nil then
+            if type(results[1]) == "number" then
+                rankIdx = 6  -- Anniversary: id, name, icon, tier, col, RANK
+            else
+                rankIdx = 5  -- Classic: name, icon, tier, col, RANK
+            end
         end
+
+        local rank = tonumber(results[rankIdx]) or 0
+        total = total + rank
     end
     return total
 end
@@ -435,34 +420,45 @@ local function OnInspectReady(guid)
         FinishInspect()
         if AS.OnMemberCaptured then AS.OnMemberCaptured() end
     else
-        -- Talents not ready yet — keep inspect open and retry after delay
+        -- Talents not ready yet — keep inspect open and retry
         Verbose("  Scanned |cffffffff" .. charName .. "|r (" .. gc
               .. " items, talents pending)  [" .. s.totalCaptured .. "/" .. s.totalInRaid .. "]")
 
         -- Cancel the timeout so we don't double-finish
         if inspectTimer then inspectTimer:Cancel(); inspectTimer = nil end
 
-        -- Retry talents in 1.5 seconds, then close inspect
-        C_Timer.After(1.5, function()
-            -- Re-read talents while inspect is still open
-            local retryTalents = CaptureTalents(true)
-            local retryPts = 0
-            if retryTalents and retryTalents.trees then
-                for _, tree in ipairs(retryTalents.trees) do
-                    retryPts = retryPts + (tree.points or 0)
+        -- Retry talents at staggered intervals, finish after last attempt
+        local retryDelays = { 1, 2, 3, 4 }
+        local resolved = false
+
+        for idx, delay in ipairs(retryDelays) do
+            C_Timer.After(delay, function()
+                if resolved then return end
+                local retryTalents = CaptureTalents(true)
+                local retryPts = 0
+                if retryTalents and retryTalents.trees then
+                    for _, tree in ipairs(retryTalents.trees) do
+                        retryPts = retryPts + (tree.points or 0)
+                    end
                 end
-            end
-            if retryPts > 0 then
-                -- Update stored snapshot with real talents
-                if snap.members[charName] then
-                    snap.members[charName].talents = retryTalents
+                if retryPts > 0 then
+                    resolved = true
+                    if snap.members[charName] then
+                        snap.members[charName].talents = retryTalents
+                    end
+                    Verbose("  Updated talents for |cffffffff" .. charName
+                          .. "|r: " .. retryTalents.points .. " " .. retryTalents.spec)
+                    FinishInspect()
+                    if AS.OnMemberCaptured then AS.OnMemberCaptured() end
+                elseif idx == #retryDelays then
+                    -- Last attempt, give up and move on
+                    resolved = true
+                    Verbose("  Could not read talents for |cffffffff" .. charName .. "|r")
+                    FinishInspect()
+                    if AS.OnMemberCaptured then AS.OnMemberCaptured() end
                 end
-                Verbose("  Updated talents for |cffffffff" .. charName
-                      .. "|r: " .. retryTalents.points .. " " .. retryTalents.spec)
-            end
-            FinishInspect()
-            if AS.OnMemberCaptured then AS.OnMemberCaptured() end
-        end)
+            end)
+        end
     end
 end
 
@@ -696,6 +692,39 @@ function AS.DeleteSnapshot(key)
 end
 
 ----------------------------------------------------------------------
+-- Snapshot retention — purge snapshots older than 30 days
+----------------------------------------------------------------------
+local RETENTION_DAYS = 30
+
+function AS.PurgeOldSnapshots()
+    if not AS.db or not AS.db.snapshots then return end
+    local now = time()
+    local cutoff = now - (RETENTION_DAYS * 86400)
+    local purged = 0
+
+    for key, snap in pairs(AS.db.snapshots) do
+        -- Parse timestamp from key format "YYYY-MM-DD HH:MM - Zone"
+        local y, m, d, H, M = key:match("^(%d%d%d%d)-(%d%d)-(%d%d) (%d%d):(%d%d)")
+        if y then
+            local snapTime = time({
+                year = tonumber(y), month = tonumber(m), day = tonumber(d),
+                hour = tonumber(H), min = tonumber(M), sec = 0,
+            })
+            if snapTime < cutoff then
+                AS.db.snapshots[key] = nil
+                purged = purged + 1
+            end
+        end
+    end
+
+    if purged > 0 then
+        Print("Purged " .. purged .. " snapshot"
+              .. (purged ~= 1 and "s" or "") .. " older than "
+              .. RETENTION_DAYS .. " days.")
+    end
+end
+
+----------------------------------------------------------------------
 -- EVENT FRAME
 ----------------------------------------------------------------------
 local eventFrame = CreateFrame("Frame")
@@ -719,6 +748,7 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
         if AS.db.options.minimapPos == nil then AS.db.options.minimapPos = nil end
 
         CacheEmptyTextures()
+        AS.PurgeOldSnapshots()
         C_Timer.NewTicker(SCAN_TICK, ScannerTick)
         Print("v1.1.0 loaded. |cfffff000/as|r to open.")
 
