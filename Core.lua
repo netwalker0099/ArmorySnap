@@ -71,6 +71,12 @@ local function Print(msg)
 end
 AS.Print = Print
 
+local function Verbose(msg)
+    if AS.db and AS.db.options and AS.db.options.verbose then
+        Print(msg)
+    end
+end
+
 local function GetTimestamp()
     return date("%Y-%m-%d %H:%M")
 end
@@ -345,7 +351,7 @@ local function OnInspectReady(guid)
     if charInfo.talents and charInfo.talents.spec ~= "" then
         specStr = "  " .. charInfo.talents.points .. " " .. charInfo.talents.spec
     end
-    Print("  Scanned |cffffffff" .. charInfo.name .. "|r (" .. gc
+    Verbose("  Scanned |cffffffff" .. charInfo.name .. "|r (" .. gc
           .. " items" .. specStr .. ")  [" .. s.totalCaptured .. "/" .. s.totalInRaid .. "]")
 
     FinishInspect()
@@ -371,7 +377,7 @@ local function TryInspectUnit(unit)
             if ci.talents and ci.talents.spec ~= "" then
                 specStr = "  " .. ci.talents.points .. " " .. ci.talents.spec
             end
-            Print("  Scanned |cffffffff" .. ci.name .. "|r (self" .. specStr .. ")  ["
+            Verbose("  Scanned |cffffffff" .. ci.name .. "|r (self" .. specStr .. ")  ["
                   .. s.totalCaptured .. "/" .. s.totalInRaid .. "]")
             if AS.OnMemberCaptured then AS.OnMemberCaptured() end
         end
@@ -401,7 +407,7 @@ local function ScannerTick()
 
     if not AS.ShouldAutoScan() then
         if s.active then
-            Print("Left scannable area — pausing.")
+            Verbose("Left scannable area — pausing.")
             s.active = false
         end
         return
@@ -410,7 +416,7 @@ local function ScannerTick()
     local zone = GetRealZoneText() or ""
     if zone ~= lastZone then
         if lastZone and s.snapshotKey then
-            Print("Zone changed → starting new scan session.")
+            Verbose("Zone changed → starting new scan session.")
         end
         AS.ResetSession()
         lastZone = zone
@@ -421,7 +427,7 @@ local function ScannerTick()
         EnsureSessionSnapshot()
         BuildPendingQueue()
         if #s.pending > 0 then
-            Print("Auto-scan started in |cfffff000" .. zone
+            Verbose("Auto-scan started in |cfffff000" .. zone
                   .. "|r  (" .. #s.pending .. " members)")
         end
     end
@@ -435,7 +441,7 @@ local function ScannerTick()
             BuildPendingQueue()
             if #s.pending > 0 then
                 s.passComplete = false
-                Print("Roster change detected — scanning "
+                Verbose("Roster change detected — scanning "
                       .. #s.pending .. " new/remaining members.")
             end
         end
@@ -445,7 +451,7 @@ local function ScannerTick()
                 s.pending      = s.failed
                 s.failed       = {}
                 s.passComplete = false
-                Print("Retrying " .. #s.pending
+                Verbose("Retrying " .. #s.pending
                       .. " members that were out of range …")
             end
         end
@@ -470,13 +476,13 @@ local function ScannerTick()
     UpdateCounts()
     if #s.failed > 0 then
         s.retryClock = RETRY_COOLDOWN
-        Print("Pass done. |cffffffff" .. s.totalCaptured .. "/"
+        Verbose("Pass done. |cffffffff" .. s.totalCaptured .. "/"
               .. s.totalInRaid .. "|r captured.  Retrying "
               .. #s.failed .. " in " .. RETRY_COOLDOWN .. "s.")
     else
         s.rosterClock = ROSTER_CHECK
         if s.totalCaptured > 0 then
-            Print("All |cff00ff00" .. s.totalCaptured
+            Verbose("All |cff00ff00" .. s.totalCaptured
                   .. "|r raid members captured!")
         end
     end
@@ -505,13 +511,13 @@ function AS.TakeManualSnapshot(label)
         if UnitExists(unit) then table.insert(queue, unit) end
     end
 
-    Print("Manual snapshot: |cfffff000" .. key .. "|r  (" .. #queue .. " members)")
+    Verbose("Manual snapshot: |cfffff000" .. key .. "|r  (" .. #queue .. " members)")
 
     local captured, idx = 0, 0
     local function DoNext()
         idx = idx + 1
         if idx > #queue then
-            Print("Manual snapshot done — " .. captured .. "/" .. #queue .. " captured.")
+            Verbose("Manual snapshot done — " .. captured .. "/" .. #queue .. " captured.")
             if AS.RefreshSnapshotList then AS.RefreshSnapshotList() end
             return
         end
@@ -601,12 +607,12 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
         if not AS.db.options   then AS.db.options   = {} end
         if AS.db.options.scanGroup  == nil then AS.db.options.scanGroup  = false end
         if AS.db.options.elvuiTheme == nil then AS.db.options.elvuiTheme = false end
+        if AS.db.options.verbose    == nil then AS.db.options.verbose    = false end
         if AS.db.options.minimapPos == nil then AS.db.options.minimapPos = nil end
 
         CacheEmptyTextures()
         C_Timer.NewTicker(SCAN_TICK, ScannerTick)
-        Print("Loaded — auto-scan active in raid instances.")
-        Print("Type |cfffff000/as|r for commands.")
+        Print("v1.1.0 loaded. |cfffff000/as|r to open.")
 
     elseif event == "INSPECT_READY" then
         OnInspectReady(arg1)
@@ -678,6 +684,15 @@ SlashCmdList["ARMORYSNAP"] = function(msg)
         end
         if AS.ApplyTheme then AS.ApplyTheme() end
 
+    elseif cmd == "verbose" or cmd == "chat" then
+        AS.db.options.verbose = not AS.db.options.verbose
+        if AS.db.options.verbose then
+            Print("Chat output |cff00ff00ENABLED|r")
+        else
+            Print("Chat output |cffff4444DISABLED|r")
+        end
+        if AS.UpdateVerboseCheckbox then AS.UpdateVerboseCheckbox() end
+
     elseif cmd == "status" then
         local s = AS.session
         if s.active then
@@ -685,7 +700,7 @@ SlashCmdList["ARMORYSNAP"] = function(msg)
                   .. s.totalInRaid .. "|r captured.")
             Print("Session: |cfffff000" .. (s.snapshotKey or "none") .. "|r")
             if s.passComplete and #s.failed > 0 then
-                Print("Retrying " .. #s.failed .. " in "
+                Verbose("Retrying " .. #s.failed .. " in "
                       .. math.max(0, math.floor(s.retryClock)) .. "s")
             end
         else
@@ -709,6 +724,7 @@ SlashCmdList["ARMORYSNAP"] = function(msg)
         Print("  |cfffff000/as delete <n>|r   – Delete a snapshot")
         Print("  |cfffff000/as group|r           – Toggle group scanning")
         Print("  |cfffff000/as theme|r           – Toggle ElvUI theme")
+        Print("  |cfffff000/as verbose|r         – Toggle chat output")
         Print("  |cfffff000/as status|r          – Show scanner status")
         Print("  |cfffff000/as reset|r           – Reset current session")
     end

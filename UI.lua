@@ -81,7 +81,7 @@ local talentFrame, talentIcons, talentTexts, talentSpecText
 local snapshotDropdown
 local memberScrollChild
 local scanStatusBar, scanStatusText, scanStatusPct, scanStatusBg
-local groupCheckbox, themeCheckbox
+local groupCheckbox, themeCheckbox, verboseCheckbox
 local dollFrame, dollBg
 local elvuiOverlays = {}  -- textures / objects we restyle on theme toggle
 
@@ -456,6 +456,24 @@ local function CreateBrowseFrame()
         end
     end)
     themeCheckbox = tcb
+
+    -- Verbose checkbox
+    local vcb = CreateFrame("CheckButton", "ASVerboseCB", cbRow,
+                            "UICheckButtonTemplate")
+    vcb:SetPoint("LEFT", tcb, "RIGHT", 80, 0)
+    vcb:SetSize(22, 22)
+    vcb.text = _G[vcb:GetName() .. "Text"] or vcb.Text
+    if vcb.text then
+        vcb.text:SetText("Chat Log")
+        vcb.text:SetFontObject("GameFontNormalSmall")
+    end
+    vcb:SetChecked(AS.db and AS.db.options and AS.db.options.verbose or false)
+    vcb:SetScript("OnClick", function(self)
+        if AS.db and AS.db.options then
+            AS.db.options.verbose = self:GetChecked() and true or false
+        end
+    end)
+    verboseCheckbox = vcb
 
     --==============================================================
     -- LEFT PANEL: Snapshot dropdown + member list
@@ -880,6 +898,12 @@ function AS.UpdateGroupCheckbox()
     end
 end
 
+function AS.UpdateVerboseCheckbox()
+    if verboseCheckbox and AS.db and AS.db.options then
+        verboseCheckbox:SetChecked(AS.db.options.verbose)
+    end
+end
+
 ----------------------------------------------------------------------
 -- Toggle browse frame
 ----------------------------------------------------------------------
@@ -893,6 +917,9 @@ function AS.ToggleBrowseFrame()
         end
         if themeCheckbox and AS.db and AS.db.options then
             themeCheckbox:SetChecked(AS.db.options.elvuiTheme)
+        end
+        if verboseCheckbox and AS.db and AS.db.options then
+            verboseCheckbox:SetChecked(AS.db.options.verbose)
         end
         browseFrame:Show()
         AS.ApplyTheme()
