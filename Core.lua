@@ -149,6 +149,11 @@ end
 ----------------------------------------------------------------------
 
 -- Sum individual talent ranks for a tab (fallback when pointsSpent=0)
+-- Anniversary GetTalentInfo returns:
+--   id, name, icon, tier, column, rank, maxRank, ...  (rank at 6)
+-- Classic GetTalentInfo returns:
+--   name, icon, tier, column, rank, maxRank, ...       (rank at 5)
+-- Detect by checking if first return is a number (id) or string (name)
 local function SumTalentPoints(tab, isInspect)
     local total = 0
     local ok, numTalents
@@ -159,6 +164,24 @@ local function SumTalentPoints(tab, isInspect)
     end
     if not ok or not numTalents then return 0 end
     numTalents = tonumber(numTalents) or 0
+
+    -- Probe first talent to detect return layout
+    local rankIdx = 5  -- classic default
+    if numTalents > 0 then
+        local pOk, pResults
+        if isInspect then
+            pOk, pResults = pcall(function()
+                return { GetTalentInfo(tab, 1, true) }
+            end)
+        else
+            pOk, pResults = pcall(function()
+                return { GetTalentInfo(tab, 1) }
+            end)
+        end
+        if pOk and pResults and type(pResults[1]) == "number" then
+            rankIdx = 6  -- id is prepended, shift by 1
+        end
+    end
 
     for i = 1, numTalents do
         local tOk, results
@@ -172,22 +195,8 @@ local function SumTalentPoints(tab, isInspect)
             end)
         end
         if tOk and results then
-            -- rank is at index 5 in classic, but may shift if id is
-            -- prepended like GetTalentTabInfo; find first plausible rank
-            -- by scanning for a small number after the tier/column pair
-            local rank = nil
-            for idx = 4, math.min(#results, 8) do
-                local v = tonumber(results[idx])
-                if v and v >= 0 and v <= 5 then
-                    -- next value should be maxRank (also small positive)
-                    local nxt = tonumber(results[idx + 1])
-                    if nxt and nxt >= 1 and nxt <= 5 then
-                        rank = v
-                        break
-                    end
-                end
-            end
-            total = total + (rank or 0)
+            local rank = tonumber(results[rankIdx]) or 0
+            total = total + rank
         end
     end
     return total
