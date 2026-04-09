@@ -149,35 +149,33 @@ end
 ----------------------------------------------------------------------
 
 -- Sum individual talent ranks for a tab (fallback when pointsSpent=0)
--- Iterates talents 1-30, ignoring GetNumTalents which may return 0
--- for inspected targets. Breaks when GetTalentInfo returns nil.
+-- Anniversary API requires full params: (tab, index, isInspect, isPet, talentGroup)
+-- Blizzard's own TalentFrameBase.lua passes all four extra params.
 local function SumTalentPoints(tab, isInspect)
     local total = 0
-    local rankIdx = nil  -- will detect on first valid result
+    local rankIdx = nil
 
     for i = 1, 30 do
         local tOk, results
         if isInspect then
             tOk, results = pcall(function()
-                return { GetTalentInfo(tab, i, true) }
+                return { GetTalentInfo(tab, i, true, false, 1) }
             end)
         else
             tOk, results = pcall(function()
-                return { GetTalentInfo(tab, i) }
+                return { GetTalentInfo(tab, i, false, false, 1) }
             end)
         end
 
-        -- Break if call failed or returned nothing useful
         if not tOk or not results or #results < 4 then break end
-        -- Break if first meaningful field is nil (no more talents)
         if results[1] == nil then break end
 
-        -- Detect layout once from first result
+        -- Detect layout once: number first = id prefix (rank at 6), string = classic (rank at 5)
         if rankIdx == nil then
             if type(results[1]) == "number" then
-                rankIdx = 6  -- Anniversary: id, name, icon, tier, col, RANK
+                rankIdx = 6
             else
-                rankIdx = 5  -- Classic: name, icon, tier, col, RANK
+                rankIdx = 5
             end
         end
 
@@ -196,11 +194,12 @@ local function CaptureTalents(isInspect)
     local maxPts, maxTree = 0, ""
     local ptsStrParts = {}
 
+    -- Anniversary requires full params: (isInspect, isPet, talentGroup)
     local ok, numTabs
     if isInspect then
-        ok, numTabs = pcall(GetNumTalentTabs, true)
+        ok, numTabs = pcall(GetNumTalentTabs, true, false)
     else
-        ok, numTabs = pcall(GetNumTalentTabs)
+        ok, numTabs = pcall(GetNumTalentTabs, false, false)
     end
     if not ok or not numTabs then numTabs = 3 end
     numTabs = tonumber(numTabs) or 3
@@ -209,10 +208,10 @@ local function CaptureTalents(isInspect)
         local tOk, tId, tName, tDesc, tIcon, tPts, tBg
         if isInspect then
             tOk, tId, tName, tDesc, tIcon, tPts, tBg =
-                pcall(GetTalentTabInfo, tab, true)
+                pcall(GetTalentTabInfo, tab, true, false, 1)
         else
             tOk, tId, tName, tDesc, tIcon, tPts, tBg =
-                pcall(GetTalentTabInfo, tab)
+                pcall(GetTalentTabInfo, tab, false, false, 1)
         end
         if not tOk then
             tName, tIcon, tPts = "Tree " .. tab, "", 0
