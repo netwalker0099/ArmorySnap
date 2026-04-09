@@ -156,7 +156,7 @@ local function CaptureTalents(isInspect)
             tName, tIcon, tPts, tBg = GetTalentTabInfo(tab, false)
         end
         tName = tName or ("Tree " .. tab)
-        tPts  = tPts or 0
+        tPts  = tonumber(tPts) or 0
         tIcon = tIcon or ""
         table.insert(talents.trees, {
             name   = tName,
