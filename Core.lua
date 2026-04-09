@@ -141,106 +141,168 @@ local function CaptureGear(unit)
 end
 
 ----------------------------------------------------------------------
--- Capture talents for a unit
--- Anniversary API: GetTalentTabInfo(tabIndex [, isInspect])
---   returns: id, name, description, icon, pointsSpent, background, ...
--- GetTalentInfo(tab, index [, isInspect])
---   returns: name, iconTexture, tier, column, rank, maxRank, ...
+-- Capture talents — tries every known API variant
 ----------------------------------------------------------------------
 
--- Sum individual talent ranks for a tab (fallback when pointsSpent=0)
--- Anniversary API requires full params: (tab, index, isInspect, isPet, talentGroup)
--- Blizzard's own TalentFrameBase.lua passes all four extra params.
+-- Sum individual talent ranks via GetTalentInfo
 local function SumTalentPoints(tab, isInspect)
     local total = 0
     local rankIdx = nil
 
-    for i = 1, 30 do
-        local tOk, results
-        if isInspect then
-            tOk, results = pcall(function()
-                return { GetTalentInfo(tab, i, true, false, 1) }
-            end)
-        else
-            tOk, results = pcall(function()
-                return { GetTalentInfo(tab, i, false, false, 1) }
-            end)
+    -- Try GetNumTalents with various signatures
+    local numTalents = 0
+    for _, fn in ipairs({
+        function() return GetNumTalents(tab, isInspect) end,
+        function() return GetNumTalents(tab, isInspect, false) end,
+        function() return GetNumTalents(tab) end,
+    }) do
+        local ok, n = pcall(fn)
+        if ok and n and tonumber(n) and tonumber(n) > 0 then
+            numTalents = tonumber(n); break
         end
+    end
+    if numTalents == 0 then numTalents = 30 end
 
-        if not tOk or not results or #results < 4 then break end
-        if results[1] == nil then break end
-
-        -- Detect layout once: number first = id prefix (rank at 6), string = classic (rank at 5)
-        if rankIdx == nil then
-            if type(results[1]) == "number" then
-                rankIdx = 6
-            else
-                rankIdx = 5
+    for i = 1, numTalents do
+        local results
+        for _, fn in ipairs({
+            function() return { GetTalentInfo(tab, i, isInspect, false, nil) } end,
+            function() return { GetTalentInfo(tab, i, isInspect, false) } end,
+            function() return { GetTalentInfo(tab, i, isInspect) } end,
+        }) do
+            local ok, r = pcall(fn)
+            if ok and r and #r >= 4 and r[1] ~= nil then
+                results = r; break
             end
         end
+        if not results then break end
 
-        local rank = tonumber(results[rankIdx]) or 0
-        total = total + rank
+        if rankIdx == nil then
+            rankIdx = type(results[1]) == "number" and 6 or 5
+        end
+        total = total + (tonumber(results[rankIdx]) or 0)
     end
     return total
 end
 
 local function CaptureTalents(isInspect)
-    local talents = {
-        trees  = {},
-        spec   = "",
-        points = "",
-    }
+    local talents = { trees = {}, spec = "", points = "" }
     local maxPts, maxTree = 0, ""
     local ptsStrParts = {}
 
-    -- Anniversary requires full params: (isInspect, isPet, talentGroup)
-    local ok, numTabs
-    if isInspect then
-        ok, numTabs = pcall(GetNumTalentTabs, true, false)
-    else
-        ok, numTabs = pcall(GetNumTalentTabs, false, false)
-    end
-    if not ok or not numTabs then numTabs = 3 end
-    numTabs = tonumber(numTabs) or 3
+    local numTabs = 3
+    local ok, n = pcall(function() return GetNumTalentTabs(isInspect) end)
+    if ok and n and tonumber(n) and tonumber(n) > 0 then numTabs = tonumber(n) end
 
     for tab = 1, numTabs do
-        local tOk, tId, tName, tDesc, tIcon, tPts, tBg
-        if isInspect then
-            tOk, tId, tName, tDesc, tIcon, tPts, tBg =
-                pcall(GetTalentTabInfo, tab, true, false, 1)
-        else
-            tOk, tId, tName, tDesc, tIcon, tPts, tBg =
-                pcall(GetTalentTabInfo, tab, false, false, 1)
-        end
-        if not tOk then
-            tName, tIcon, tPts = "Tree " .. tab, "", 0
-        end
-        tName = tName or ("Tree " .. tab)
-        tPts  = tonumber(tPts) or 0
-        tIcon = tIcon or ""
+        local tName, tIcon, tPts = "Tree " .. tab, "", 0
 
-        -- Fallback: if pointsSpent is 0, sum individual talent ranks
+        -- Try GetTalentTabInfo with multiple signatures
+        for _, fn in ipairs({
+            function() return { GetTalentTabInfo(tab, isInspect) } end,
+            function() return { GetTalentTabInfo(tab, isInspect, false) } end,
+            function() return { GetTalentTabInfo(tab, isInspect, false, nil) } end,
+        }) do
+            local fOk, r = pcall(fn)
+            if fOk and r and #r >= 3 then
+                if type(r[1]) == "number" then
+                    -- id prefix: id, name, desc, icon, pts, bg
+                    tName = tostring(r[2] or tName)
+                    tIcon = r[4] or ""
+                    tPts  = tonumber(r[5]) or 0
+                else
+                    -- classic: name, icon, pts, bg
+                    tName = tostring(r[1] or tName)
+                    tIcon = r[2] or ""
+                    tPts  = tonumber(r[3]) or 0
+                end
+                if tPts > 0 then break end -- found data, stop trying
+            end
+        end
+
+        -- Fallback: sum individual talent ranks
         if tPts == 0 then
             local summed = SumTalentPoints(tab, isInspect)
             if summed > 0 then tPts = summed end
         end
 
-        table.insert(talents.trees, {
-            name   = tName,
-            icon   = tIcon,
-            points = tPts,
-        })
+        table.insert(talents.trees, { name = tName, icon = tIcon, points = tPts })
         table.insert(ptsStrParts, tostring(tPts))
-        if tPts > maxPts then
-            maxPts  = tPts
-            maxTree = tName
-        end
+        if tPts > maxPts then maxPts = tPts; maxTree = tName end
     end
 
     talents.spec   = maxTree
     talents.points = table.concat(ptsStrParts, "/")
     return talents
+end
+
+----------------------------------------------------------------------
+-- Debug dump: /as debug  — prints raw API returns for diagnosis
+----------------------------------------------------------------------
+function AS.DebugTalentDump()
+    Print("=== TALENT DEBUG ===")
+    Print("-- SELF --")
+    for tab = 1, 3 do
+        local r = { pcall(GetTalentTabInfo, tab) }
+        local s = "Tab(" .. tab .. "):"
+        for i = 2, math.min(#r, 8) do
+            s = s .. " [" .. type(r[i]) .. ":" .. tostring(r[i]) .. "]"
+        end
+        Print(s)
+    end
+
+    if not UnitExists("target") or UnitIsUnit("target", "player") then
+        Print("Target someone else, then /as debug")
+        return
+    end
+
+    local tgtName = UnitName("target") or "?"
+    Print("-- INSPECT: " .. tgtName .. " (2s delay) --")
+    NotifyInspect("target")
+
+    C_Timer.After(2, function()
+        for tab = 1, 3 do
+            -- GetTalentTabInfo variants
+            for _, pair in ipairs({
+                {"TabInfo(t,true)",          function() return GetTalentTabInfo(tab, true) end},
+                {"TabInfo(t,true,false)",     function() return GetTalentTabInfo(tab, true, false) end},
+                {"TabInfo(t,true,false,nil)", function() return GetTalentTabInfo(tab, true, false, nil) end},
+            }) do
+                local r = { pcall(pair[2]) }
+                local s = "  " .. pair[1] .. ":"
+                for i = 2, math.min(#r, 8) do
+                    s = s .. " [" .. type(r[i]) .. ":" .. tostring(r[i]) .. "]"
+                end
+                Print(s)
+            end
+
+            -- GetNumTalents
+            for _, pair in ipairs({
+                {"NumTalents(t,true)",      function() return GetNumTalents(tab, true) end},
+                {"NumTalents(t,true,false)", function() return GetNumTalents(tab, true, false) end},
+            }) do
+                local ok, val = pcall(pair[2])
+                Print("  " .. pair[1] .. ": ok=" .. tostring(ok) .. " val=" .. tostring(val))
+            end
+
+            -- GetTalentInfo for talent #1
+            for _, pair in ipairs({
+                {"Info(t,1,true)",           function() return GetTalentInfo(tab, 1, true) end},
+                {"Info(t,1,true,false)",      function() return GetTalentInfo(tab, 1, true, false) end},
+                {"Info(t,1,true,false,nil)",  function() return GetTalentInfo(tab, 1, true, false, nil) end},
+            }) do
+                local r = { pcall(pair[2]) }
+                local s = "  " .. pair[1] .. ":"
+                for i = 2, math.min(#r, 10) do
+                    s = s .. " [" .. type(r[i]) .. ":" .. tostring(r[i]) .. "]"
+                end
+                Print(s)
+            end
+            Print("  ---")
+        end
+        ClearInspectPlayer()
+        Print("=== END DEBUG ===")
+    end)
 end
 
 ----------------------------------------------------------------------
@@ -812,6 +874,9 @@ SlashCmdList["ARMORYSNAP"] = function(msg)
         AS.ResetSession()
         lastZone = nil
         Print("Session reset.")
+
+    elseif cmd == "debug" then
+        AS.DebugTalentDump()
 
     else
         Print("Commands:")
