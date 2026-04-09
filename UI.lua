@@ -907,61 +907,87 @@ function AS.ToggleBrowseFrame()
 end
 
 ----------------------------------------------------------------------
--- MINIMAP BUTTON  (fully draggable around minimap, position saved)
+-- MINIMAP BUTTON  (free-drag, works with any minimap shape/addon)
 ----------------------------------------------------------------------
 local function CreateMinimapButton()
-    local btn = CreateFrame("Button", "ASMinimapButton", Minimap)
-    btn:SetSize(32, 32)
+    local BUTTON_SIZE = 32
+
+    local btn = CreateFrame("Button", "ASMinimapButton", UIParent)
+    btn:SetSize(BUTTON_SIZE, BUTTON_SIZE)
     btn:SetFrameStrata("MEDIUM")
     btn:SetFrameLevel(8)
-    btn:SetHighlightTexture(
-        "Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
+    btn:SetClampedToScreen(true)
     btn:SetMovable(true)
     btn:EnableMouse(true)
     btn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
     btn:RegisterForDrag("LeftButton")
 
-    local icon = btn:CreateTexture(nil, "ARTWORK")
-    icon:SetSize(20, 20)
-    icon:SetPoint("CENTER")
-    icon:SetTexture("Interface\\Icons\\INV_Chest_Chain_09")
-
-    local border = btn:CreateTexture(nil, "OVERLAY")
-    border:SetSize(54, 54)
-    border:SetPoint("CENTER")
-    border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
-
+    -- Circular mask background
     local bg = btn:CreateTexture(nil, "BACKGROUND")
-    bg:SetSize(24, 24)
+    bg:SetSize(BUTTON_SIZE, BUTTON_SIZE)
     bg:SetPoint("CENTER")
     bg:SetTexture("Interface\\Minimap\\UI-Minimap-Background")
 
-    local function UpdatePos()
-        local angle = AS.db and AS.db.options
-                      and AS.db.options.minimapAngle or 220
-        local r = math.rad(angle)
+    -- Icon centred inside
+    local icon = btn:CreateTexture(nil, "ARTWORK")
+    icon:SetSize(18, 18)
+    icon:SetPoint("CENTER", 0, 1)
+    icon:SetTexture("Interface\\Icons\\INV_Chest_Chain_09")
+    -- Crop icon to remove the border baked into the texture
+    icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+
+    -- Minimap-style circular border overlay
+    local border = btn:CreateTexture(nil, "OVERLAY")
+    border:SetSize(54, 54)
+    border:SetPoint("TOPLEFT", btn, "TOPLEFT", -1, 1)
+    border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
+
+    -- Highlight
+    local hl = btn:CreateTexture(nil, "HIGHLIGHT")
+    hl:SetSize(24, 24)
+    hl:SetPoint("CENTER", 0, 1)
+    hl:SetTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
+    hl:SetBlendMode("ADD")
+
+    -- Restore saved position or default near top-right of Minimap
+    local function RestorePos()
         btn:ClearAllPoints()
-        btn:SetPoint("CENTER", Minimap, "CENTER",
-                     math.cos(r) * 80, math.sin(r) * 80)
+        local saved = AS.db and AS.db.options and AS.db.options.minimapPos
+        if saved and saved.point then
+            btn:SetPoint(saved.point, UIParent, saved.relPoint,
+                         saved.x, saved.y)
+        else
+            -- Default: near Minimap top-left area
+            if Minimap then
+                local mx, my = Minimap:GetCenter()
+                local scale  = Minimap:GetEffectiveScale()
+                local uScale = UIParent:GetEffectiveScale()
+                local sx = (mx * scale) / uScale - 40
+                local sy = (my * scale) / uScale + 40
+                btn:SetPoint("CENTER", UIParent, "BOTTOMLEFT", sx, sy)
+            else
+                btn:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", -20, -180)
+            end
+        end
+    end
+
+    local function SavePos()
+        if not AS.db or not AS.db.options then return end
+        local point, _, relPoint, x, y = btn:GetPoint(1)
+        AS.db.options.minimapPos = {
+            point    = point,
+            relPoint = relPoint or point,
+            x        = x,
+            y        = y,
+        }
     end
 
     btn:SetScript("OnDragStart", function(self)
-        self.dragging = true
-        self:SetScript("OnUpdate", function(self)
-            local mx, my = Minimap:GetCenter()
-            local cx, cy = GetCursorPosition()
-            local s = Minimap:GetEffectiveScale()
-            local angle = math.deg(math.atan2(cy / s - my, cx / s - mx))
-            if AS.db and AS.db.options then
-                AS.db.options.minimapAngle = angle
-            end
-            UpdatePos()
-        end)
+        self:StartMoving()
     end)
-
     btn:SetScript("OnDragStop", function(self)
-        self.dragging = false
-        self:SetScript("OnUpdate", nil)
+        self:StopMovingOrSizing()
+        SavePos()
     end)
 
     btn:SetScript("OnClick", function(self, button)
@@ -990,13 +1016,12 @@ local function CreateMinimapButton()
         end
         GameTooltip:AddLine("|cffffffffLeft-Click|r  Browse", 0.8, 0.8, 0.8)
         GameTooltip:AddLine("|cffffffffRight-Click|r Toggle ElvUI theme", 0.8, 0.8, 0.8)
-        GameTooltip:AddLine("|cffffffffDrag|r  Move button", 0.8, 0.8, 0.8)
+        GameTooltip:AddLine("|cffffffffDrag|r  Move anywhere", 0.8, 0.8, 0.8)
         GameTooltip:Show()
     end)
     btn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
-    -- Apply saved position after a short delay to ensure Minimap is ready
-    C_Timer.After(0.5, UpdatePos)
+    C_Timer.After(0.5, RestorePos)
 end
 
 ----------------------------------------------------------------------

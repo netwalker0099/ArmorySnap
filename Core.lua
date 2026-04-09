@@ -586,7 +586,7 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
         if not AS.db.options   then AS.db.options   = {} end
         if AS.db.options.scanGroup  == nil then AS.db.options.scanGroup  = false end
         if AS.db.options.elvuiTheme == nil then AS.db.options.elvuiTheme = false end
-        if AS.db.options.minimapAngle == nil then AS.db.options.minimapAngle = 220 end
+        if AS.db.options.minimapPos == nil then AS.db.options.minimapPos = nil end
 
         CacheEmptyTextures()
         C_Timer.NewTicker(SCAN_TICK, ScannerTick)
