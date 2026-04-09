@@ -141,19 +141,34 @@ end
 ----------------------------------------------------------------------
 local function CaptureTalents(isInspect)
     local talents = {
-        trees  = {},     -- { {name, icon, points}, {name, icon, points}, {name, icon, points} }
-        spec   = "",     -- name of the tree with the most points
-        points = "",     -- "5/51/15" style string
+        trees  = {},
+        spec   = "",
+        points = "",
     }
     local maxPts, maxTree = 0, ""
     local ptsStrParts = {}
 
-    for tab = 1, GetNumTalentTabs(isInspect) or 3 do
-        local tName, tIcon, tPts, tBg
+    -- TBC Anniversary API:
+    --   Self:    GetNumTalentTabs()        / GetTalentTabInfo(tab)
+    --   Inspect: GetNumTalentTabs(true)    / GetTalentTabInfo(tab, true)
+    local ok, numTabs
+    if isInspect then
+        ok, numTabs = pcall(GetNumTalentTabs, true)
+    else
+        ok, numTabs = pcall(GetNumTalentTabs)
+    end
+    if not ok or not numTabs then numTabs = 3 end
+    numTabs = tonumber(numTabs) or 3
+
+    for tab = 1, numTabs do
+        local tOk, tName, tIcon, tPts, tBg
         if isInspect then
-            tName, tIcon, tPts, tBg = GetTalentTabInfo(tab, true)
+            tOk, tName, tIcon, tPts, tBg = pcall(GetTalentTabInfo, tab, true)
         else
-            tName, tIcon, tPts, tBg = GetTalentTabInfo(tab, false)
+            tOk, tName, tIcon, tPts, tBg = pcall(GetTalentTabInfo, tab)
+        end
+        if not tOk then
+            tName, tIcon, tPts = "Tree " .. tab, "", 0
         end
         tName = tName or ("Tree " .. tab)
         tPts  = tonumber(tPts) or 0

@@ -20,12 +20,12 @@ local DOLL_WIDTH    = 330
 local FRAME_WIDTH   = LIST_WIDTH + DOLL_WIDTH + 30
 local DOLL_COL_H    = #LEFT_SLOTS * (SLOT_SIZE + SLOT_SPACING)
 local DOLL_H        = DOLL_COL_H + SLOT_SIZE + 16       -- columns + gap + bot row
-local TALENT_H      = 46                                 -- talent bar area
+local TALENT_H      = 76                                 -- talent bar area
 local FRAME_HEIGHT  = 28 + 18 + 26 + 24 + 28 + 22       -- title + status + checkbox row + snap label
                     + 30                                  -- dropdown
                     + DOLL_H + TALENT_H                   -- paper doll + talents
                     + 40                                  -- summary + padding
-FRAME_HEIGHT = math.max(FRAME_HEIGHT, 560)               -- floor
+FRAME_HEIGHT = math.max(FRAME_HEIGHT, 590)               -- floor
 
 ----------------------------------------------------------------------
 -- Class / quality colours
@@ -613,14 +613,16 @@ local function CreateBrowseFrame()
         local ic = talentFrame:CreateTexture(nil, "ARTWORK")
         ic:SetSize(treeWidth, treeWidth)
         ic:SetPoint("TOPLEFT", talentFrame, "TOPLEFT",
-                    treeStart + (t - 1) * (treeWidth + treeGap), -14)
+                    treeStart + (t - 1) * (treeWidth + treeGap), -18)
         ic:SetTexCoord(0.08, 0.92, 0.08, 0.92)
         ic:Hide()
         talentIcons[t] = ic
 
         local tx = talentFrame:CreateFontString(nil, "OVERLAY",
                                                  "GameFontHighlightSmall")
-        tx:SetPoint("TOP", ic, "BOTTOM", 0, -1)
+        tx:SetPoint("TOP", ic, "BOTTOM", 0, -2)
+        tx:SetWidth(treeWidth + treeGap - 4)
+        tx:SetJustifyH("CENTER")
         tx:SetText("")
         talentTexts[t] = tx
     end
