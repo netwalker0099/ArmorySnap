@@ -144,7 +144,55 @@ end
 -- Capture talents for a unit
 -- Anniversary API: GetTalentTabInfo(tabIndex [, isInspect])
 --   returns: id, name, description, icon, pointsSpent, background, ...
+-- GetTalentInfo(tab, index [, isInspect])
+--   returns: name, iconTexture, tier, column, rank, maxRank, ...
 ----------------------------------------------------------------------
+
+-- Sum individual talent ranks for a tab (fallback when pointsSpent=0)
+local function SumTalentPoints(tab, isInspect)
+    local total = 0
+    local ok, numTalents
+    if isInspect then
+        ok, numTalents = pcall(GetNumTalents, tab, true)
+    else
+        ok, numTalents = pcall(GetNumTalents, tab)
+    end
+    if not ok or not numTalents then return 0 end
+    numTalents = tonumber(numTalents) or 0
+
+    for i = 1, numTalents do
+        local tOk, results
+        if isInspect then
+            tOk, results = pcall(function()
+                return { GetTalentInfo(tab, i, true) }
+            end)
+        else
+            tOk, results = pcall(function()
+                return { GetTalentInfo(tab, i) }
+            end)
+        end
+        if tOk and results then
+            -- rank is at index 5 in classic, but may shift if id is
+            -- prepended like GetTalentTabInfo; find first plausible rank
+            -- by scanning for a small number after the tier/column pair
+            local rank = nil
+            for idx = 4, math.min(#results, 8) do
+                local v = tonumber(results[idx])
+                if v and v >= 0 and v <= 5 then
+                    -- next value should be maxRank (also small positive)
+                    local nxt = tonumber(results[idx + 1])
+                    if nxt and nxt >= 1 and nxt <= 5 then
+                        rank = v
+                        break
+                    end
+                end
+            end
+            total = total + (rank or 0)
+        end
+    end
+    return total
+end
+
 local function CaptureTalents(isInspect)
     local talents = {
         trees  = {},
@@ -178,6 +226,13 @@ local function CaptureTalents(isInspect)
         tName = tName or ("Tree " .. tab)
         tPts  = tonumber(tPts) or 0
         tIcon = tIcon or ""
+
+        -- Fallback: if pointsSpent is 0, sum individual talent ranks
+        if tPts == 0 then
+            local summed = SumTalentPoints(tab, isInspect)
+            if summed > 0 then tPts = summed end
+        end
+
         table.insert(talents.trees, {
             name   = tName,
             icon   = tIcon,
