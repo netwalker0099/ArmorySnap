@@ -739,7 +739,8 @@ function AS.RefreshMemberList()
 
         -- Spec shorthand on right if talents exist
         local rightLabel = ""
-        if member.talents and member.talents.points ~= "" then
+        if member.talents and member.talents.points ~= ""
+           and member.talents.points ~= "0/0/0" then
             rightLabel = member.talents.points
         else
             local gc = 0
@@ -823,17 +824,38 @@ function AS.RefreshPaperDoll()
     -- Talents
     local tal = member.talents
     if tal and tal.trees and #tal.trees > 0 then
+        -- Check if we have real point data
+        local totalPts = 0
+        for _, tree in ipairs(tal.trees) do
+            totalPts = totalPts + (tree.points or 0)
+        end
+
         local specColor = "|cff" .. string.format("%02x%02x%02x",
             cc.r * 255, cc.g * 255, cc.b * 255)
-        talentSpecText:SetText(specColor .. (tal.spec or "") .. "|r  "
-                               .. (tal.points or ""))
-        for t = 1, math.min(3, #tal.trees) do
-            local tree = tal.trees[t]
-            if tree.icon and tree.icon ~= "" then
-                talentIcons[t]:SetTexture(tree.icon)
-                talentIcons[t]:Show()
+
+        if totalPts > 0 then
+            -- Full talent data available (self or working inspect)
+            talentSpecText:SetText(specColor .. (tal.spec or "") .. "|r  "
+                                   .. (tal.points or ""))
+            for t = 1, math.min(3, #tal.trees) do
+                local tree = tal.trees[t]
+                if tree.icon and tree.icon ~= "" then
+                    talentIcons[t]:SetTexture(tree.icon)
+                    talentIcons[t]:Show()
+                end
+                talentTexts[t]:SetText(tree.name .. "\n" .. tree.points)
             end
-            talentTexts[t]:SetText(tree.name .. "\n" .. tree.points)
+        else
+            -- Tree names available but points not (Anniversary API limitation)
+            talentSpecText:SetText("|cff888888Talent details unavailable via inspect|r")
+            for t = 1, math.min(3, #tal.trees) do
+                local tree = tal.trees[t]
+                if tree.icon and tree.icon ~= "" then
+                    talentIcons[t]:SetTexture(tree.icon)
+                    talentIcons[t]:Show()
+                end
+                talentTexts[t]:SetText(tree.name .. "\n|cff666666N/A|r")
+            end
         end
     end
 

@@ -398,67 +398,27 @@ local function OnInspectReady(guid)
         end
     end
 
-    local charName = charInfo.name
+    -- Note: TBC Anniversary API does not return talent point allocations
+    -- for inspected targets (confirmed limitation, affects all addons).
+    -- Tree names and icons are available; pointsSpent is always 0.
+    -- Self-inspection works correctly.
 
-    -- Save what we have now
+    local charName = charInfo.name
     snap.members[charName] = charInfo
     s.captured[charName]   = true
     UpdateCounts()
 
     local gc = 0
     for _ in pairs(charInfo.gear) do gc = gc + 1 end
-
-    if totalPts > 0 then
-        -- Got talents, finish immediately
-        local specStr = ""
-        if charInfo.talents.spec ~= "" then
-            specStr = "  " .. charInfo.talents.points .. " " .. charInfo.talents.spec
-        end
-        Verbose("  Scanned |cffffffff" .. charName .. "|r (" .. gc
-              .. " items" .. specStr .. ")  [" .. s.totalCaptured .. "/" .. s.totalInRaid .. "]")
-        FinishInspect()
-        if AS.OnMemberCaptured then AS.OnMemberCaptured() end
-    else
-        -- Talents not ready yet — keep inspect open and retry
-        Verbose("  Scanned |cffffffff" .. charName .. "|r (" .. gc
-              .. " items, talents pending)  [" .. s.totalCaptured .. "/" .. s.totalInRaid .. "]")
-
-        -- Cancel the timeout so we don't double-finish
-        if inspectTimer then inspectTimer:Cancel(); inspectTimer = nil end
-
-        -- Retry talents at staggered intervals, finish after last attempt
-        local retryDelays = { 1, 2, 3, 4 }
-        local resolved = false
-
-        for idx, delay in ipairs(retryDelays) do
-            C_Timer.After(delay, function()
-                if resolved then return end
-                local retryTalents = CaptureTalents(true)
-                local retryPts = 0
-                if retryTalents and retryTalents.trees then
-                    for _, tree in ipairs(retryTalents.trees) do
-                        retryPts = retryPts + (tree.points or 0)
-                    end
-                end
-                if retryPts > 0 then
-                    resolved = true
-                    if snap.members[charName] then
-                        snap.members[charName].talents = retryTalents
-                    end
-                    Verbose("  Updated talents for |cffffffff" .. charName
-                          .. "|r: " .. retryTalents.points .. " " .. retryTalents.spec)
-                    FinishInspect()
-                    if AS.OnMemberCaptured then AS.OnMemberCaptured() end
-                elseif idx == #retryDelays then
-                    -- Last attempt, give up and move on
-                    resolved = true
-                    Verbose("  Could not read talents for |cffffffff" .. charName .. "|r")
-                    FinishInspect()
-                    if AS.OnMemberCaptured then AS.OnMemberCaptured() end
-                end
-            end)
-        end
+    local specStr = ""
+    if totalPts > 0 and charInfo.talents and charInfo.talents.spec ~= "" then
+        specStr = "  " .. charInfo.talents.points .. " " .. charInfo.talents.spec
     end
+    Verbose("  Scanned |cffffffff" .. charName .. "|r (" .. gc
+          .. " items" .. specStr .. ")  [" .. s.totalCaptured .. "/" .. s.totalInRaid .. "]")
+
+    FinishInspect()
+    if AS.OnMemberCaptured then AS.OnMemberCaptured() end
 end
 
 local function TryInspectUnit(unit)
